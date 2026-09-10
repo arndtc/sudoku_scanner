@@ -1,0 +1,6 @@
+{
+  "name": "Sudoku Scanner",
+  "description": "Offline Sudoku puzzle scanner, graphical board editor, and exporter for OpenSudoku (.opensudoku and .sdm formats).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
