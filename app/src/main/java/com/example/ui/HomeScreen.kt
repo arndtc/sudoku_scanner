@@ -35,12 +35,15 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -86,6 +89,8 @@ fun HomeScreen(
     // Temporary photo URI for high-res camera capture
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
     var showCameraPermissionRationale by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showSamplePuzzleDialog by remember { mutableStateOf(false) }
 
     // Camera launcher
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -177,6 +182,38 @@ fun HomeScreen(
                         }
                     }
                 },
+                actions = {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier.testTag("home_menu_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "Options"
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Try Built-in Sample Puzzles") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Lightbulb,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                showSamplePuzzleDialog = true
+                            },
+                            modifier = Modifier.testTag("menu_item_sample_puzzle")
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
@@ -210,7 +247,7 @@ fun HomeScreen(
                         title = "Take Picture",
                         subtitle = "Snap from paper / book",
                         icon = Icons.Default.CameraAlt,
-                        gradient = listOf(Color(0xFF4F46E5), Color(0xFF6366F1)),
+                        gradient = listOf(Color(0xFF00695C), Color(0xFF00897B)),
                         modifier = Modifier.weight(1f),
                         onClick = {
                             val hasCameraPermission = ContextCompat.checkSelfPermission(
@@ -231,7 +268,7 @@ fun HomeScreen(
                         title = "From Gallery",
                         subtitle = "Select saved photo",
                         icon = Icons.Default.Image,
-                        gradient = listOf(Color(0xFF0D9488), Color(0xFF14B8A6)),
+                        gradient = listOf(Color(0xFF00838F), Color(0xFF00ACC1)),
                         modifier = Modifier.weight(1f),
                         onClick = {
                             photoPickerLauncher.launch(
@@ -239,72 +276,6 @@ fun HomeScreen(
                             )
                         }
                     )
-                }
-            }
-
-            // Sample Puzzles Section for Instant Offline Demo
-            item {
-                ElevatedCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("sample_puzzles_card"),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Lightbulb,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Try Built-in Sample Puzzles",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Test importing, graphical preview, and .opensudoku export immediately without taking a photo:",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            SamplePuzzles.samples.forEachIndexed { index, sample ->
-                                OutlinedButton(
-                                    onClick = {
-                                        viewModel.loadSample(index)
-                                        onNavigateToEditor()
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(10.dp),
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = sample.difficulty,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 12.sp
-                                        )
-                                        Text(
-                                            text = "${sample.sdm.count { it != '0' }} clues",
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -386,6 +357,88 @@ fun HomeScreen(
                     }
                 ) {
                     Text("Pick from Gallery")
+                }
+            }
+        )
+    }
+
+    if (showSamplePuzzleDialog) {
+        AlertDialog(
+            onDismissRequest = { showSamplePuzzleDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Lightbulb,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = {
+                Text(
+                    text = "Sample Puzzles (Testing)",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Select a built-in puzzle to verify OCR parsing, the board editor, and OpenSudoku export:",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    SamplePuzzles.samples.forEachIndexed { index, sample ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showSamplePuzzleDialog = false
+                                    viewModel.loadSample(index)
+                                    onNavigateToEditor()
+                                }
+                                .testTag("sample_puzzle_${sample.difficulty.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "${sample.difficulty} Puzzle",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Text(
+                                        text = "Sample #${index + 1}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "${sample.sdm.count { it != '0' }} clues",
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showSamplePuzzleDialog = false }) {
+                    Text("Close")
                 }
             }
         )
