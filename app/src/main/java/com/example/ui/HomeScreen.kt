@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AirplanemodeActive
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Image
@@ -81,6 +82,7 @@ import com.example.ocr.ImageUtils
 fun HomeScreen(
     viewModel: SudokuViewModel,
     onNavigateToEditor: () -> Unit,
+    onNavigateToCrop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -98,8 +100,9 @@ fun HomeScreen(
     ) { success ->
         if (success) {
             tempCameraUri?.let { uri ->
-                viewModel.processImageUri(uri)
-                onNavigateToEditor()
+                viewModel.prepareImageForCrop(uri) {
+                    onNavigateToCrop()
+                }
             }
         }
     }
@@ -134,8 +137,9 @@ fun HomeScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            viewModel.processImageUri(uri)
-            onNavigateToEditor()
+            viewModel.prepareImageForCrop(uri) {
+                onNavigateToCrop()
+            }
         }
     }
 
@@ -245,7 +249,7 @@ fun HomeScreen(
                     // Take Picture Card
                     ScanActionCard(
                         title = "Take Picture",
-                        subtitle = "Snap from paper / book",
+                        subtitle = "Snap & auto-crop grid",
                         icon = Icons.Default.CameraAlt,
                         gradient = listOf(Color(0xFF00695C), Color(0xFF00897B)),
                         modifier = Modifier.weight(1f),
@@ -266,7 +270,7 @@ fun HomeScreen(
                     // Pick Image Card
                     ScanActionCard(
                         title = "From Gallery",
-                        subtitle = "Select saved photo",
+                        subtitle = "Select & crop photo",
                         icon = Icons.Default.Image,
                         gradient = listOf(Color(0xFF00838F), Color(0xFF00ACC1)),
                         modifier = Modifier.weight(1f),
@@ -277,6 +281,24 @@ fun HomeScreen(
                         }
                     )
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Try Sample Photo Card
+                ScanActionCard(
+                    title = "Try Sample Photo",
+                    subtitle = "One-tap test with printed newspaper puzzle",
+                    icon = Icons.Default.AutoAwesome,
+                    gradient = listOf(Color(0xFF2E7D32), Color(0xFF43A047)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("try_sample_photo_card"),
+                    onClick = {
+                        viewModel.loadSamplePuzzle {
+                            onNavigateToEditor()
+                        }
+                    }
+                )
             }
 
             // Scanning Status Indicator

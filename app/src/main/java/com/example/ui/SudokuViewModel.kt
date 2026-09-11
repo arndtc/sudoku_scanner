@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.RectF
 import android.net.Uri
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -19,6 +20,7 @@ import com.example.logic.SudokuSolver
 import com.example.logic.SudokuValidator
 import com.example.model.PuzzleEntity
 import com.example.model.SudokuBoard
+import com.example.ocr.DecodeResult
 import com.example.ocr.ImageUtils
 import com.example.ocr.SudokuOcrEngine
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +76,25 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _currentImageUri = MutableStateFlow<Uri?>(null)
     val currentImageUri: StateFlow<Uri?> = _currentImageUri.asStateFlow()
+
+    // Interactive Crop State
+    private val _cropSourceBitmap = MutableStateFlow<Bitmap?>(null)
+    val cropSourceBitmap: StateFlow<Bitmap?> = _cropSourceBitmap.asStateFlow()
+
+    private val _cropSourceUri = MutableStateFlow<Uri?>(null)
+    val cropSourceUri: StateFlow<Uri?> = _cropSourceUri.asStateFlow()
+
+    private val _cropRect = MutableStateFlow(RectF(0.08f, 0.08f, 0.92f, 0.92f))
+    val cropRect: StateFlow<RectF> = _cropRect.asStateFlow()
+
+    private val _cropRotation = MutableStateFlow(0)
+    val cropRotation: StateFlow<Int> = _cropRotation.asStateFlow()
+
+    private val _isAutoDetecting = MutableStateFlow(false)
+    val isAutoDetecting: StateFlow<Boolean> = _isAutoDetecting.asStateFlow()
+
+    private val _cropDetectionMessage = MutableStateFlow<String?>(null)
+    val cropDetectionMessage: StateFlow<String?> = _cropDetectionMessage.asStateFlow()
 
     private val _currentPuzzleTitle = MutableStateFlow("Sudoku Scan")
     val currentPuzzleTitle: StateFlow<String> = _currentPuzzleTitle.asStateFlow()
@@ -133,13 +154,16 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
 
             try {
                 val context = getApplication<Application>()
-                val bitmap = withContext(Dispatchers.IO) {
-                    ImageUtils.loadScaledBitmap(context, uri)
+                val decodeResult = withContext(Dispatchers.IO) {
+                    ImageUtils.decodeImage(context, uri)
                 }
 
-                if (bitmap == null) {
-                    _scanStatus.value = ScanStatus.Error("Failed to decode image.")
-                    return@launch
+                val bitmap = when (decodeResult) {
+                    is DecodeResult.Success -> decodeResult.bitmap
+                    is DecodeResult.Error -> {
+                        _scanStatus.value = ScanStatus.Error(decodeResult.message)
+                        return@launch
+                    }
                 }
 
                 val ocrResult = SudokuOcrEngine.recognizeSudoku(bitmap)
@@ -163,9 +187,211 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun loadSamplePuzzle(onLoaded: () -> Unit = {}) {
+        viewModelScope.launch {
+            _scanStatus.value = ScanStatus.Scanning
+            val context = getApplication<Application>()
+            val sampleUri = withContext(Dispatchers.IO) {
+                ImageUtils.createSamplePuzzleImage(context)
+            }
+            if (sampleUri != null) {
+                processImageUri(sampleUri)
+                onLoaded()
+            } else {
+                _scanStatus.value = ScanStatus.Error("Unable to prepare sample puzzle photo.")
+            }
+        }
+    }
+
     fun rescanCurrentImage() {
         val uri = _currentImageUri.value ?: return
         processImageUri(uri)
+    }
+
+    /**
+     * Prepares a selected image Uri for cropping. Loads bitmap, initiates
+     * auto-crop boundary detection in the background, and triggers callback to open CropScreen.
+     */
+    fun prepareImageForCrop(uri: Uri, onReady: () -> Unit) {
+        viewModelScope.launch {
+            _scanStatus.value = ScanStatus.Scanning
+            _cropSourceUri.value = uri
+            _cropRotation.value = 0
+            _cropDetectionMessage.value = null
+
+            val context = getApplication<Application>()
+            val decodeResult = withContext(Dispatchers.IO) {
+                ImageUtils.decodeImage(context, uri)
+            }
+
+            val bitmap = when (decodeResult) {
+                is DecodeResult.Success -> decodeResult.bitmap
+                is DecodeResult.Error -> {
+                    _scanStatus.value = ScanStatus.Error(decodeResult.message)
+                    return@launch
+                }
+            }
+
+            _cropSourceBitmap.value = bitmap
+            _scanStatus.value = ScanStatus.Idle
+            onReady()
+
+            // Automatically run puzzle auto-detection
+            runAutoDetectCrop()
+        }
+    }
+
+    /**
+     * Prepares the current or original photo for re-cropping from the editor.
+     */
+    fun prepareExistingImageForCrop(onReady: () -> Unit) {
+        val originalUri = _cropSourceUri.value ?: _currentImageUri.value
+        if (originalUri != null) {
+            prepareImageForCrop(originalUri, onReady)
+        } else {
+            val existingBitmap = _cropSourceBitmap.value
+            if (existingBitmap != null) {
+                onReady()
+                runAutoDetectCrop()
+            }
+        }
+    }
+
+    fun setCropRect(rect: RectF) {
+        _cropRect.value = rect
+    }
+
+    /**
+     * Runs auto-detection on the current crop bitmap to snap the crop box
+     * to the 9x9 Sudoku grid.
+     */
+    fun runAutoDetectCrop() {
+        val bitmap = _cropSourceBitmap.value ?: return
+        viewModelScope.launch {
+            _isAutoDetecting.value = true
+            _cropDetectionMessage.value = "Detecting Sudoku grid..."
+            try {
+                val detectedRect = SudokuOcrEngine.autoDetectSudokuBoundingBox(bitmap)
+                _cropRect.value = detectedRect
+                _cropDetectionMessage.value = "Sudoku grid auto-detected!"
+            } catch (e: Exception) {
+                _cropDetectionMessage.value = "Default crop applied."
+            } finally {
+                _isAutoDetecting.value = false
+            }
+        }
+    }
+
+    /**
+     * Snaps current crop selection to a 1:1 square ratio centered within current selection.
+     */
+    fun setSquareCrop() {
+        val current = _cropRect.value
+        val bitmap = _cropSourceBitmap.value ?: return
+        val imgWidth = bitmap.width.toFloat()
+        val imgHeight = bitmap.height.toFloat()
+
+        val pixelW = (current.right - current.left) * imgWidth
+        val pixelH = (current.bottom - current.top) * imgHeight
+        val side = kotlin.math.max(pixelW, pixelH)
+
+        val cx = ((current.left + current.right) / 2f) * imgWidth
+        val cy = ((current.top + current.bottom) / 2f) * imgHeight
+
+        var left = cx - side / 2f
+        var right = cx + side / 2f
+        var top = cy - side / 2f
+        var bottom = cy + side / 2f
+
+        if (left < 0f) {
+            right = kotlin.math.min(imgWidth, right - left)
+            left = 0f
+        }
+        if (right > imgWidth) {
+            val overflow = right - imgWidth
+            left = kotlin.math.max(0f, left - overflow)
+            right = imgWidth
+        }
+        if (top < 0f) {
+            bottom = kotlin.math.min(imgHeight, bottom - top)
+            top = 0f
+        }
+        if (bottom > imgHeight) {
+            val overflow = bottom - imgHeight
+            top = kotlin.math.max(0f, top - overflow)
+            bottom = imgHeight
+        }
+
+        _cropRect.value = RectF(
+            (left / imgWidth).coerceIn(0f, 0.9f),
+            (top / imgHeight).coerceIn(0f, 0.9f),
+            (right / imgWidth).coerceIn(0.1f, 1f),
+            (bottom / imgHeight).coerceIn(0.1f, 1f)
+        )
+        _cropDetectionMessage.value = "Set to 1:1 Square"
+    }
+
+    /**
+     * Resets crop selection to full image.
+     */
+    fun setFullCrop() {
+        _cropRect.value = RectF(0f, 0f, 1f, 1f)
+        _cropDetectionMessage.value = "Full image selected"
+    }
+
+    /**
+     * Rotates current crop bitmap 90 degrees clockwise.
+     */
+    fun rotateCropImageClockwise() {
+        val current = _cropSourceBitmap.value ?: return
+        val rotated = ImageUtils.rotateBitmap(current, 90f)
+        _cropSourceBitmap.value = rotated
+        _cropRotation.value = (_cropRotation.value + 90) % 360
+        runAutoDetectCrop()
+    }
+
+    /**
+     * Crops the bitmap according to the current selection, saves it to cache,
+     * processes OCR on the clean cropped image, and completes navigation.
+     */
+    fun applyCropAndScan(onComplete: () -> Unit) {
+        val bitmap = _cropSourceBitmap.value ?: return
+        viewModelScope.launch {
+            _scanStatus.value = ScanStatus.Scanning
+            onComplete()
+
+            try {
+                val context = getApplication<Application>()
+                val croppedBitmap = withContext(Dispatchers.Default) {
+                    ImageUtils.cropBitmap(bitmap, _cropRect.value)
+                }
+
+                val croppedUri = withContext(Dispatchers.IO) {
+                    ImageUtils.saveCroppedBitmap(context, croppedBitmap)
+                }
+                if (croppedUri != null) {
+                    _currentImageUri.value = croppedUri
+                }
+
+                val ocrResult = SudokuOcrEngine.recognizeSudoku(croppedBitmap)
+                if (ocrResult.detectedCount > 0) {
+                    _initialScannedBoard.value = ocrResult.board
+                    _currentBoard.value = ocrResult.board
+                    _currentPuzzleTitle.value = "Cropped Scan (${ocrResult.detectedCount} clues)"
+                    _scanStatus.value = ScanStatus.Success(
+                        detectedCount = ocrResult.detectedCount,
+                        message = ocrResult.message
+                    )
+                    recomputeValidationAndSolve(ocrResult.board)
+                    autoSavePuzzle()
+                } else {
+                    _scanStatus.value = ScanStatus.Error(ocrResult.message)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _scanStatus.value = ScanStatus.Error("Crop & OCR failed: ${e.localizedMessage}")
+            }
+        }
     }
 
     fun dismissScanStatus() {

@@ -179,4 +179,54 @@ class SudokuLogicTest {
         assertEquals(sample.clueCount, restoredBoard.clueCount)
         assertEquals("Entity Test", entity.title)
     }
+
+    @Test
+    fun testAnalyzeImageHeaderDetectsHtmlWebpage() {
+        val htmlContent = "<!DOCTYPE html><html><head><title>Search</title></head><body><h1>Not an image</h1></body></html>"
+        val analysis = com.example.ocr.ImageUtils.analyzeImageHeader(htmlContent.toByteArray(Charsets.UTF_8))
+
+        assertEquals("HTML/Webpage", analysis.format)
+        assertFalse(analysis.isValidHeader)
+        assertEquals("text/html", analysis.mimeTypeGuess)
+    }
+
+    @Test
+    fun testAnalyzeImageHeaderDetectsPng() {
+        val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(20)
+        val analysis = com.example.ocr.ImageUtils.analyzeImageHeader(pngBytes)
+
+        assertEquals("PNG", analysis.format)
+        assertTrue(analysis.isValidHeader)
+        assertEquals("image/png", analysis.mimeTypeGuess)
+        assertFalse(analysis.isCmyk)
+    }
+
+    @Test
+    fun testAnalyzeImageHeaderDetectsCmykJpeg() {
+        // Construct mock JPEG with SOF0 (0xC0) having 4 color components
+        val header = byteArrayOf(
+            0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xC0.toByte(),
+            0x00, 0x11, // length 17
+            0x08,       // precision 8
+            0x01, 0x00, // height 256
+            0x01, 0x00, // width 256
+            0x04        // 4 components -> CMYK!
+        )
+        val analysis = com.example.ocr.ImageUtils.analyzeImageHeader(header)
+
+        assertEquals("JPEG", analysis.format)
+        assertTrue(analysis.isValidHeader)
+        assertTrue(analysis.isCmyk)
+        assertEquals(4, analysis.colorChannels)
+    }
+
+    @Test
+    fun testAnalyzeImageHeaderDetectsCorruptedHeader() {
+        val corruptedBytes = byteArrayOf(0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07)
+        val analysis = com.example.ocr.ImageUtils.analyzeImageHeader(corruptedBytes)
+
+        assertEquals("Unknown/Corrupted", analysis.format)
+        assertFalse(analysis.isValidHeader)
+    }
 }
+

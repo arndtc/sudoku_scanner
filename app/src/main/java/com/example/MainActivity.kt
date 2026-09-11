@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.example.logic.SudokuExporter
 import com.example.ui.HomeScreen
+import com.example.ui.ImageCropScreen
 import com.example.ui.SudokuEditorScreen
 import com.example.ui.SudokuViewModel
 import com.example.ui.components.ExportDialog
@@ -29,6 +30,7 @@ import com.example.ui.theme.MyApplicationTheme
 
 enum class AppScreen {
     HOME,
+    CROP,
     EDITOR
 }
 
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
 fun MainContent(viewModel: SudokuViewModel) {
     val context = LocalContext.current
     var currentScreen by remember { mutableStateOf(AppScreen.HOME) }
+    var previousScreen by remember { mutableStateOf(AppScreen.HOME) }
     var showExportDialog by remember { mutableStateOf(false) }
     var pendingExportFormat by remember { mutableStateOf(SudokuExporter.ExportFormat.OPEN_SUDOKU) }
 
@@ -64,7 +67,7 @@ fun MainContent(viewModel: SudokuViewModel) {
         }
     }
 
-    // Main App Navigation between Home & Graphical Sudoku Editor
+    // Main App Navigation between Home, Interactive Crop, and Graphical Sudoku Editor
     AnimatedContent(
         targetState = currentScreen,
         transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -75,14 +78,29 @@ fun MainContent(viewModel: SudokuViewModel) {
             AppScreen.HOME -> {
                 HomeScreen(
                     viewModel = viewModel,
-                    onNavigateToEditor = { currentScreen = AppScreen.EDITOR }
+                    onNavigateToEditor = { currentScreen = AppScreen.EDITOR },
+                    onNavigateToCrop = {
+                        previousScreen = AppScreen.HOME
+                        currentScreen = AppScreen.CROP
+                    }
+                )
+            }
+            AppScreen.CROP -> {
+                ImageCropScreen(
+                    viewModel = viewModel,
+                    onBack = { currentScreen = previousScreen },
+                    onCropApplied = { currentScreen = AppScreen.EDITOR }
                 )
             }
             AppScreen.EDITOR -> {
                 SudokuEditorScreen(
                     viewModel = viewModel,
                     onBack = { currentScreen = AppScreen.HOME },
-                    onOpenExport = { showExportDialog = true }
+                    onOpenExport = { showExportDialog = true },
+                    onNavigateToCrop = {
+                        previousScreen = AppScreen.EDITOR
+                        currentScreen = AppScreen.CROP
+                    }
                 )
             }
         }

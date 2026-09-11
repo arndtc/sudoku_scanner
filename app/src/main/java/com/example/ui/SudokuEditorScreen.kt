@@ -22,8 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Image
@@ -72,6 +74,7 @@ fun SudokuEditorScreen(
     viewModel: SudokuViewModel,
     onBack: () -> Unit,
     onOpenExport: () -> Unit,
+    onNavigateToCrop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val currentBoard by viewModel.currentBoard.collectAsStateWithLifecycle()
@@ -200,25 +203,46 @@ fun SudokuEditorScreen(
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             if (imageUri != null) {
                                 Button(
-                                    onClick = { viewModel.rescanCurrentImage() },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    shape = RoundedCornerShape(8.dp)
+                                    onClick = {
+                                        viewModel.prepareExistingImageForCrop {
+                                            onNavigateToCrop()
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.testTag("crop_rescan_banner_btn")
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Refresh,
+                                        imageVector = Icons.Default.CropFree,
                                         contentDescription = null,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Rescan Photo", fontSize = 11.sp)
+                                    Text("Crop & Rescan", fontSize = 11.sp)
                                 }
+                            }
+                            FilledTonalButton(
+                                onClick = { viewModel.loadSamplePuzzle() },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Try Sample Photo", fontSize = 11.sp)
                             }
                             OutlinedButton(
                                 onClick = { viewModel.dismissScanStatus() },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text("Dismiss", fontSize = 11.sp)
@@ -266,13 +290,31 @@ fun SudokuEditorScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (showPhotoPreview) "Original Photo" else "Show Original Photo",
+                                    text = if (showPhotoPreview) "Scanned Photo" else "Show Photo",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.prepareExistingImageForCrop {
+                                            onNavigateToCrop()
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.testTag("crop_photo_preview_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CropFree,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Crop", fontSize = 11.sp)
+                                }
+
                                 TextButton(
                                     onClick = { viewModel.rescanCurrentImage() },
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
