@@ -202,6 +202,24 @@ fun HomeScreen(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
+                            text = { Text("Try Sample Photo") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                viewModel.loadSamplePuzzle {
+                                    onNavigateToEditor()
+                                }
+                            },
+                            modifier = Modifier.testTag("menu_item_sample_photo")
+                        )
+
+                        DropdownMenuItem(
                             text = { Text("Try Built-in Sample Puzzles") },
                             leadingIcon = {
                                 Icon(
@@ -281,24 +299,6 @@ fun HomeScreen(
                         }
                     )
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Try Sample Photo Card
-                ScanActionCard(
-                    title = "Try Sample Photo",
-                    subtitle = "One-tap test with printed newspaper puzzle",
-                    icon = Icons.Default.AutoAwesome,
-                    gradient = listOf(Color(0xFF2E7D32), Color(0xFF43A047)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("try_sample_photo_card"),
-                    onClick = {
-                        viewModel.loadSamplePuzzle {
-                            onNavigateToEditor()
-                        }
-                    }
-                )
             }
 
             // Scanning Status Indicator
