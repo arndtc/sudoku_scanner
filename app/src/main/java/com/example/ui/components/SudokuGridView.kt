@@ -20,8 +20,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -45,46 +47,56 @@ fun SudokuGridView(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(colors.gridBackground)
-            .border(2.5.dp, colors.outerBorder, RoundedCornerShape(12.dp))
-            .padding(2.dp)
             .testTag("sudoku_grid_view")
     ) {
-        val totalSize = maxWidth
-        val cellSize = totalSize / 9f
-
-        // Draw subgrid 3x3 block separator lines
+        // Sudoku grid contents with major 3x3 block separator lines drawn on top
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .drawBehind {
+                .drawWithContent {
+                    // 1. Draw the underlying 9x9 cells, backgrounds, and digits
+                    drawContent()
+
                     val w = size.width
                     val h = size.height
                     val colStep = w / 9f
                     val rowStep = h / 9f
 
-                    // Draw vertical block lines at cols 3 and 6
+                    val majorStrokePx = 3.dp.toPx()
+                    val majorColor = colors.subgridBorder
+
+                    // 2. Draw major vertical grid lines: bolder line every 3rd column (at col 3 and col 6)
                     for (i in listOf(3, 6)) {
                         val x = i * colStep
                         drawLine(
-                            color = colors.subgridBorder,
+                            color = majorColor,
                             start = Offset(x, 0f),
                             end = Offset(x, h),
-                            strokeWidth = 2.5.dp.toPx()
+                            strokeWidth = majorStrokePx
                         )
                     }
 
-                    // Draw horizontal block lines at rows 3 and 6
+                    // 3. Draw major horizontal grid lines: bolder line every 3rd row (at row 3 and row 6)
                     for (i in listOf(3, 6)) {
                         val y = i * rowStep
                         drawLine(
-                            color = colors.subgridBorder,
+                            color = majorColor,
                             start = Offset(0f, y),
                             end = Offset(w, y),
-                            strokeWidth = 2.5.dp.toPx()
+                            strokeWidth = majorStrokePx
                         )
                     }
+
+                    // 4. Draw outer border frame matching the major grid line stroke
+                    val halfStroke = majorStrokePx / 2f
+                    drawRect(
+                        color = colors.outerBorder,
+                        topLeft = Offset(halfStroke, halfStroke),
+                        size = Size(w - majorStrokePx, h - majorStrokePx),
+                        style = Stroke(width = majorStrokePx)
+                    )
                 }
         ) {
             Column(modifier = Modifier.fillMaxSize()) {

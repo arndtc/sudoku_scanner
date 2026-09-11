@@ -66,9 +66,9 @@ data class SudokuBoardColors(
 
 val OpenSudokuBoardColors = SudokuBoardColors(
     gridBackground = Color(0xFF0C1013), // Deep black-slate board background
-    outerBorder = Color(0xFF00897B),    // Iconic Open Sudoku teal outer border
-    subgridBorder = Color(0xFF00897B),  // Iconic Open Sudoku teal 3x3 box borders
-    cellBorder = Color(0xFF0F3633),     // Subtle dark teal 1x1 cell grid lines
+    outerBorder = Color(0xFF26A69A),    // Vibrant iconic teal outer border
+    subgridBorder = Color(0xFF26A69A),  // Vibrant iconic teal 3x3 major block separator lines
+    cellBorder = Color(0xFF1E3236),     // Subtle dark teal 1x1 minor cell grid lines
     selectedCell = Color(0xFF004D40),   // Dark teal selection highlight
     relatedCell = Color(0xFF102628),    // Soft row/col/box crosshair highlight
     sameDigitCell = Color(0xFF173836),  // Matching number highlight
