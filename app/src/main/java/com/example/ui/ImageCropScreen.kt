@@ -63,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -72,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -495,9 +497,6 @@ private fun InteractiveCropViewport(
             offsetY = 0f
         }
 
-        // Generous touch targets for effortless resizing on mobile touchscreens and emulators
-        val cornerThresholdPx = with(density) { 54.dp.toPx() }
-        val edgeThresholdPx = with(density) { 36.dp.toPx() }
 
         // Render Image
         Image(
@@ -529,20 +528,39 @@ private fun InteractiveCropViewport(
                             val x = startOffset.x
                             val y = startOffset.y
 
-                            // Check corners first (highest priority)
+                            val cropW = sRight - sLeft
+                            val cropH = sBottom - sTop
+
+                            val topMidX = (sLeft + sRight) / 2f
+                            val botMidX = (sLeft + sRight) / 2f
+                            val leftMidY = (sTop + sBottom) / 2f
+                            val rightMidY = (sTop + sBottom) / 2f
+
+                            // Dynamic touch thresholds so corner knobs never swallow the middle edge drag handles
+                            val pillTouchRadius = with(density) { 44.dp.toPx() }
+                            val maxCornerRadius = min(with(density) { 40.dp.toPx() }, min(cropW, cropH) * 0.32f)
+                            val edgeTouchBand = with(density) { 36.dp.toPx() }
+
+                            // 1. Prioritize direct hits on Edge Middle Grips (pills) so horizontal/vertical drag is immediately responsive
                             activeHandle = when {
-                                hypot(x - sLeft, y - sTop) <= cornerThresholdPx -> DragHandle.TOP_LEFT
-                                hypot(x - sRight, y - sTop) <= cornerThresholdPx -> DragHandle.TOP_RIGHT
-                                hypot(x - sLeft, y - sBottom) <= cornerThresholdPx -> DragHandle.BOTTOM_LEFT
-                                hypot(x - sRight, y - sBottom) <= cornerThresholdPx -> DragHandle.BOTTOM_RIGHT
+                                hypot(x - topMidX, y - sTop) <= pillTouchRadius -> DragHandle.EDGE_TOP
+                                hypot(x - botMidX, y - sBottom) <= pillTouchRadius -> DragHandle.EDGE_BOTTOM
+                                hypot(x - sLeft, y - leftMidY) <= pillTouchRadius -> DragHandle.EDGE_LEFT
+                                hypot(x - sRight, y - rightMidY) <= pillTouchRadius -> DragHandle.EDGE_RIGHT
 
-                                // Check edges
-                                y in sTop..sBottom && kotlin.math.abs(x - sLeft) <= edgeThresholdPx -> DragHandle.EDGE_LEFT
-                                y in sTop..sBottom && kotlin.math.abs(x - sRight) <= edgeThresholdPx -> DragHandle.EDGE_RIGHT
-                                x in sLeft..sRight && kotlin.math.abs(y - sTop) <= edgeThresholdPx -> DragHandle.EDGE_TOP
-                                x in sLeft..sRight && kotlin.math.abs(y - sBottom) <= edgeThresholdPx -> DragHandle.EDGE_BOTTOM
+                                // 2. Corner knobs (bounded proportionally to box size)
+                                hypot(x - sLeft, y - sTop) <= maxCornerRadius -> DragHandle.TOP_LEFT
+                                hypot(x - sRight, y - sTop) <= maxCornerRadius -> DragHandle.TOP_RIGHT
+                                hypot(x - sLeft, y - sBottom) <= maxCornerRadius -> DragHandle.BOTTOM_LEFT
+                                hypot(x - sRight, y - sBottom) <= maxCornerRadius -> DragHandle.BOTTOM_RIGHT
 
-                                // Check inside center pan
+                                // 3. Along the edge borders (with expanded touch band around borders)
+                                abs(y - sTop) <= edgeTouchBand && x in (sLeft - edgeTouchBand)..(sRight + edgeTouchBand) -> DragHandle.EDGE_TOP
+                                abs(y - sBottom) <= edgeTouchBand && x in (sLeft - edgeTouchBand)..(sRight + edgeTouchBand) -> DragHandle.EDGE_BOTTOM
+                                abs(x - sLeft) <= edgeTouchBand && y in (sTop - edgeTouchBand)..(sBottom + edgeTouchBand) -> DragHandle.EDGE_LEFT
+                                abs(x - sRight) <= edgeTouchBand && y in (sTop - edgeTouchBand)..(sBottom + edgeTouchBand) -> DragHandle.EDGE_RIGHT
+
+                                // 4. Center pan inside the crop box
                                 x in sLeft..sRight && y in sTop..sBottom -> DragHandle.CENTER_PAN
 
                                 else -> DragHandle.NONE
@@ -732,17 +750,39 @@ private fun InteractiveCropViewport(
             drawCornerKnob(sLeft, sBottom, activeHandle == DragHandle.BOTTOM_LEFT)
             drawCornerKnob(sRight, sBottom, activeHandle == DragHandle.BOTTOM_RIGHT)
 
-            // 6. Draw Edge center pills
-            val pillLen = 26.dp.toPx()
-            val pillStroke = Stroke(width = 4.dp.toPx())
-            // Top edge
-            drawLine(Color.White, Offset((sLeft + sRight) / 2f - pillLen / 2, sTop), Offset((sLeft + sRight) / 2f + pillLen / 2, sTop), pillStroke.width)
-            // Bottom edge
-            drawLine(Color.White, Offset((sLeft + sRight) / 2f - pillLen / 2, sBottom), Offset((sLeft + sRight) / 2f + pillLen / 2, sBottom), pillStroke.width)
-            // Left edge
-            drawLine(Color.White, Offset(sLeft, (sTop + sBottom) / 2f - pillLen / 2), Offset(sLeft, (sTop + sBottom) / 2f + pillLen / 2), pillStroke.width)
-            // Right edge
-            drawLine(Color.White, Offset(sRight, (sTop + sBottom) / 2f - pillLen / 2), Offset(sRight, (sTop + sBottom) / 2f + pillLen / 2), pillStroke.width)
+            // 6. Draw Edge center pills with active highlight and high contrast
+            val pillLen = 28.dp.toPx()
+            val pillBaseWidth = 4.5.dp.toPx()
+
+            fun drawEdgePill(isH: Boolean, cx: Float, cy: Float, isActive: Boolean) {
+                val color = if (isActive) primaryColor else Color.White
+                val strokeW = if (isActive) pillBaseWidth * 1.35f else pillBaseWidth
+                val len = if (isActive) pillLen * 1.25f else pillLen
+
+                if (isActive) {
+                    val glowW = strokeW + 6.dp.toPx()
+                    val glowColor = primaryColor.copy(alpha = 0.45f)
+                    if (isH) {
+                        drawLine(glowColor, Offset(cx - len / 2f, cy), Offset(cx + len / 2f, cy), glowW, StrokeCap.Round)
+                    } else {
+                        drawLine(glowColor, Offset(cx, cy - len / 2f), Offset(cx, cy + len / 2f), glowW, StrokeCap.Round)
+                    }
+                }
+                // High contrast dark outline
+                val outlineW = strokeW + 2.5.dp.toPx()
+                if (isH) {
+                    drawLine(Color(0xB3000000), Offset(cx - len / 2f, cy), Offset(cx + len / 2f, cy), outlineW, StrokeCap.Round)
+                    drawLine(color, Offset(cx - len / 2f, cy), Offset(cx + len / 2f, cy), strokeW, StrokeCap.Round)
+                } else {
+                    drawLine(Color(0xB3000000), Offset(cx, cy - len / 2f), Offset(cx, cy + len / 2f), outlineW, StrokeCap.Round)
+                    drawLine(color, Offset(cx, cy - len / 2f), Offset(cx, cy + len / 2f), strokeW, StrokeCap.Round)
+                }
+            }
+
+            drawEdgePill(isH = true, cx = (sLeft + sRight) / 2f, cy = sTop, isActive = activeHandle == DragHandle.EDGE_TOP)
+            drawEdgePill(isH = true, cx = (sLeft + sRight) / 2f, cy = sBottom, isActive = activeHandle == DragHandle.EDGE_BOTTOM)
+            drawEdgePill(isH = false, cx = sLeft, cy = (sTop + sBottom) / 2f, isActive = activeHandle == DragHandle.EDGE_LEFT)
+            drawEdgePill(isH = false, cx = sRight, cy = (sTop + sBottom) / 2f, isActive = activeHandle == DragHandle.EDGE_RIGHT)
         }
     }
 }

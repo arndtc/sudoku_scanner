@@ -233,6 +233,7 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             _cropSourceBitmap.value = bitmap
+            _cropRect.value = RectF(0.08f, 0.08f, 0.92f, 0.92f)
             _scanStatus.value = ScanStatus.Idle
             onReady()
 
