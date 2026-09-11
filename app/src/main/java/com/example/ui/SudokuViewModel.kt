@@ -158,9 +158,18 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                _scanStatus.value = ScanStatus.Error("OCR failed: ${e.localizedMessage}")
+                _scanStatus.value = ScanStatus.Error("OCR failed: ${e.localizedMessage ?: "Unknown error"}")
             }
         }
+    }
+
+    fun rescanCurrentImage() {
+        val uri = _currentImageUri.value ?: return
+        processImageUri(uri)
+    }
+
+    fun dismissScanStatus() {
+        _scanStatus.value = ScanStatus.Idle
     }
 
     fun processDirectBitmap(bitmap: Bitmap) {

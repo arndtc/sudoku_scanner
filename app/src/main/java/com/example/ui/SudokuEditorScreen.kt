@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -43,6 +44,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -78,8 +80,9 @@ fun SudokuEditorScreen(
     val solveResult by viewModel.solveResult.collectAsStateWithLifecycle()
     val currentTitle by viewModel.currentPuzzleTitle.collectAsStateWithLifecycle()
     val imageUri by viewModel.currentImageUri.collectAsStateWithLifecycle()
+    val scanStatus by viewModel.scanStatus.collectAsStateWithLifecycle()
 
-    var showPhotoPreview by remember { mutableStateOf(false) }
+    var showPhotoPreview by remember(imageUri) { mutableStateOf(imageUri != null) }
 
     Scaffold(
         topBar = {
@@ -126,6 +129,105 @@ fun SudokuEditorScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Scanning Progress Alert
+            if (scanStatus is ScanStatus.Scanning) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("scanning_progress_card"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.5.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Scanning Sudoku with OCR...",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                text = "Recognizing digits and aligning 9x9 grid",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // OCR Error / Notice Alert
+            if (scanStatus is ScanStatus.Error) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("scan_error_card"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Scanner Notice",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 13.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = (scanStatus as ScanStatus.Error).message,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (imageUri != null) {
+                                Button(
+                                    onClick = { viewModel.rescanCurrentImage() },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Rescan Photo", fontSize = 11.sp)
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.dismissScanStatus() },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Dismiss", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
             // Status Alert Bar (Solvability / Conflict status)
             StatusBanner(
                 conflictsCount = conflictedIndices.size,
@@ -133,14 +235,13 @@ fun SudokuEditorScreen(
                 clueCount = currentBoard.clueCount
             )
 
-            // Optional Original Photo Preview (Collapsible)
+            // Original Photo Preview
             if (imageUri != null) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .clickable { showPhotoPreview = !showPhotoPreview }
-                        .testTag("photo_preview_toggle"),
+                        .testTag("photo_preview_card"),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     )
@@ -151,7 +252,12 @@ fun SudokuEditorScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { showPhotoPreview = !showPhotoPreview }
+                            ) {
                                 Icon(
                                     imageVector = Icons.Default.Image,
                                     contentDescription = null,
@@ -160,16 +266,37 @@ fun SudokuEditorScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (showPhotoPreview) "Hide Original Photo" else "Compare with Original Photo",
+                                    text = if (showPhotoPreview) "Original Photo" else "Show Original Photo",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
-                            Icon(
-                                imageVector = if (showPhotoPreview) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = { viewModel.rescanCurrentImage() },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Rescan", fontSize = 11.sp)
+                                }
+
+                                IconButton(
+                                    onClick = { showPhotoPreview = !showPhotoPreview },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (showPhotoPreview) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = if (showPhotoPreview) "Collapse" else "Expand",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
                         }
 
                         AnimatedVisibility(visible = showPhotoPreview) {

@@ -4,9 +4,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import androidx.core.content.FileProvider
-import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.io.InputStream
 import kotlin.math.max
@@ -47,8 +47,7 @@ object ImageUtils {
             // Handle EXIF orientation rotation
             val rotation = getExifOrientation(context, uri)
             if (rotation != 0) {
-                val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                rotateBitmap(rawBitmap, rotation.toFloat())
             } else {
                 rawBitmap
             }
@@ -56,6 +55,39 @@ object ImageUtils {
             e.printStackTrace()
             null
         }
+    }
+
+    fun rotateBitmap(src: Bitmap, degrees: Float): Bitmap {
+        if (degrees == 0f) return src
+        val matrix = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+    }
+
+    /**
+     * Enhances contrast and converts to grayscale for improved OCR digit detection
+     * on paper books, newsprint, and shaded backgrounds.
+     */
+    fun enhanceContrast(src: Bitmap): Bitmap {
+        val result = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(result)
+        val paint = android.graphics.Paint()
+
+        val matrix = android.graphics.ColorMatrix()
+        matrix.setSaturation(0f) // Grayscale
+
+        // High contrast adjustment: scale up darks/lights and offset
+        val contrastMatrix = android.graphics.ColorMatrix(
+            floatArrayOf(
+                1.7f, 0f, 0f, 0f, -50f,
+                0f, 1.7f, 0f, 0f, -50f,
+                0f, 0f, 1.7f, 0f, -50f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        matrix.postConcat(contrastMatrix)
+        paint.colorFilter = android.graphics.ColorMatrixColorFilter(matrix)
+        canvas.drawBitmap(src, 0f, 0f, paint)
+        return result
     }
 
     private fun getExifOrientation(context: Context, uri: Uri): Int {
