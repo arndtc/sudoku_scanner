@@ -24,19 +24,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -48,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,7 +64,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -118,7 +126,7 @@ fun ImageCropScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Cancel Crop"
+                            contentDescription = "Back"
                         )
                     }
                 },
@@ -221,7 +229,7 @@ fun ImageCropScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Presets Row
@@ -233,7 +241,7 @@ fun ImageCropScreen(
                         FilledTonalButton(
                             onClick = { viewModel.runAutoDetectCrop() },
                             modifier = Modifier
-                                .weight(1.1f)
+                                .weight(1.2f)
                                 .testTag("crop_auto_detect_btn"),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(10.dp)
@@ -244,7 +252,7 @@ fun ImageCropScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Auto-Detect", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Auto-Snap", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         OutlinedButton(
@@ -279,6 +287,129 @@ fun ImageCropScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Full", fontSize = 12.sp)
+                        }
+                    }
+
+                    // Size & Nudge Fine-Tuning Bar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Size Controls (Shrink / Expand)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "Size:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            FilledTonalIconButton(
+                                onClick = { viewModel.scaleCrop(-0.06f) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("crop_shrink_btn"),
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Remove,
+                                    contentDescription = "Shrink selection",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            FilledTonalIconButton(
+                                onClick = { viewModel.scaleCrop(0.06f) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("crop_expand_btn"),
+                                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Expand selection",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        // Directional Nudge Controls
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "Nudge:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            IconButton(
+                                onClick = { viewModel.nudgeCrop(-0.025f, 0f) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("crop_nudge_left_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowLeft,
+                                    contentDescription = "Nudge left",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.nudgeCrop(0f, -0.025f) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("crop_nudge_up_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowUp,
+                                    contentDescription = "Nudge up",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.nudgeCrop(0f, 0.025f) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("crop_nudge_down_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Nudge down",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.nudgeCrop(0.025f, 0f) },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("crop_nudge_right_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowRight,
+                                    contentDescription = "Nudge right",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
 
@@ -324,6 +455,10 @@ private fun InteractiveCropViewport(
     val density = LocalDensity.current
     var activeHandle by remember { mutableStateOf(DragHandle.NONE) }
 
+    // Use rememberUpdatedState so pointerInput is never restarted mid-drag gesture
+    val currentCropRect by rememberUpdatedState(cropRect)
+    val currentOnCropRectChanged by rememberUpdatedState(onCropRectChanged)
+
     val primaryColor = MaterialTheme.colorScheme.primary
     val guideColor = Color.White.copy(alpha = 0.55f)
     val scrimColor = Color(0x9E000000)
@@ -360,8 +495,9 @@ private fun InteractiveCropViewport(
             offsetY = 0f
         }
 
-        val cornerThresholdPx = with(density) { 38.dp.toPx() }
-        val edgeThresholdPx = with(density) { 26.dp.toPx() }
+        // Generous touch targets for effortless resizing on mobile touchscreens and emulators
+        val cornerThresholdPx = with(density) { 54.dp.toPx() }
+        val edgeThresholdPx = with(density) { 36.dp.toPx() }
 
         // Render Image
         Image(
@@ -381,13 +517,14 @@ private fun InteractiveCropViewport(
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(displayedW, displayedH, offsetX, offsetY, cropRect) {
+                .pointerInput(displayedW, displayedH, offsetX, offsetY) {
                     detectDragGestures(
                         onDragStart = { startOffset ->
-                            val sLeft = offsetX + cropRect.left * displayedW
-                            val sTop = offsetY + cropRect.top * displayedH
-                            val sRight = offsetX + cropRect.right * displayedW
-                            val sBottom = offsetY + cropRect.bottom * displayedH
+                            val cRect = currentCropRect
+                            val sLeft = offsetX + cRect.left * displayedW
+                            val sTop = offsetY + cRect.top * displayedH
+                            val sRight = offsetX + cRect.right * displayedW
+                            val sBottom = offsetY + cRect.bottom * displayedH
 
                             val x = startOffset.x
                             val y = startOffset.y
@@ -418,12 +555,13 @@ private fun InteractiveCropViewport(
                             val dx = dragAmount.x / displayedW
                             val dy = dragAmount.y / displayedH
 
-                            var l = cropRect.left
-                            var t = cropRect.top
-                            var r = cropRect.right
-                            var b = cropRect.bottom
+                            val cRect = currentCropRect
+                            var l = cRect.left
+                            var t = cRect.top
+                            var r = cRect.right
+                            var b = cRect.bottom
 
-                            val minSize = 0.10f
+                            val minSize = 0.08f
 
                             when (activeHandle) {
                                 DragHandle.TOP_LEFT -> {
@@ -473,7 +611,7 @@ private fun InteractiveCropViewport(
                                 DragHandle.NONE -> Unit
                             }
 
-                            onCropRectChanged(RectF(l, t, r, b))
+                            currentOnCropRectChanged(RectF(l, t, r, b))
                         },
                         onDragEnd = {
                             activeHandle = DragHandle.NONE
@@ -576,12 +714,15 @@ private fun InteractiveCropViewport(
             drawLine(primaryColor, Offset(sRight + 2f, sBottom), Offset(sRight - bracketLength, sBottom), bracketStroke.width)
             drawLine(primaryColor, Offset(sRight, sBottom + 2f), Offset(sRight, sBottom - bracketLength), bracketStroke.width)
 
-            // 5. Draw Circular Corner Grips for touch clarity
-            val handleRadius = 8.dp.toPx()
-            val handleBorder = 2.5.dp.toPx()
+            // 5. Draw Circular Corner Grips with Halo for touch clarity
+            val handleRadius = 11.dp.toPx()
+            val handleBorder = 3.dp.toPx()
 
             fun drawCornerKnob(cx: Float, cy: Float, isActive: Boolean) {
                 val radius = if (isActive) handleRadius * 1.35f else handleRadius
+                // Soft glow halo
+                drawCircle(color = primaryColor.copy(alpha = 0.35f), radius = radius + 6.dp.toPx(), center = Offset(cx, cy))
+                // Solid knob
                 drawCircle(color = Color.White, radius = radius, center = Offset(cx, cy))
                 drawCircle(color = primaryColor, radius = radius, center = Offset(cx, cy), style = Stroke(handleBorder))
             }
@@ -592,8 +733,8 @@ private fun InteractiveCropViewport(
             drawCornerKnob(sRight, sBottom, activeHandle == DragHandle.BOTTOM_RIGHT)
 
             // 6. Draw Edge center pills
-            val pillLen = 22.dp.toPx()
-            val pillStroke = Stroke(width = 3.5.dp.toPx())
+            val pillLen = 26.dp.toPx()
+            val pillStroke = Stroke(width = 4.dp.toPx())
             // Top edge
             drawLine(Color.White, Offset((sLeft + sRight) / 2f - pillLen / 2, sTop), Offset((sLeft + sRight) / 2f + pillLen / 2, sTop), pillStroke.width)
             // Bottom edge
@@ -605,3 +746,4 @@ private fun InteractiveCropViewport(
         }
     }
 }
+

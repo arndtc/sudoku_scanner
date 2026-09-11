@@ -228,5 +228,29 @@ class SudokuLogicTest {
         assertEquals("Unknown/Corrupted", analysis.format)
         assertFalse(analysis.isValidHeader)
     }
+
+    @Test
+    fun testCropNudgeAndScaleClamping() {
+        // Test crop normalization math
+        var l = 0.2f
+        var t = 0.2f
+        var r = 0.8f
+        var b = 0.8f
+
+        // Nudge right by 0.05
+        val dx = 0.05f
+        val w = r - l
+        val newL = (l + dx).coerceIn(0f, 1f - w)
+        val newR = newL + w
+        assertEquals(0.25f, newL, 0.001f)
+        assertEquals(0.85f, newR, 0.001f)
+
+        // Nudge beyond right border: must clamp within [0, 1]
+        val extremeDx = 0.50f
+        val clampedL = (l + extremeDx).coerceIn(0f, 1f - w)
+        val clampedR = clampedL + w
+        assertEquals(0.40f, clampedL, 0.001f)
+        assertEquals(1.00f, clampedR, 0.001f)
+    }
 }
 

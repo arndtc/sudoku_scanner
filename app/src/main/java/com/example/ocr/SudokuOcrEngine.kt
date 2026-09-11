@@ -116,59 +116,83 @@ object SudokuOcrEngine {
             val visionText = Tasks.await(recognizer.process(inputImage))
             val candidateDigits = extractCandidateDigits(visionText)
 
-            val filteredCandidates = if (candidateDigits.size >= 4) {
-                filterCandidatesByGeometryAndOutliers(candidateDigits)
-            } else {
-                candidateDigits
-            }
+            Log.d(TAG, "[AutoCrop] ML Kit found ${candidateDigits.size} candidate digits in image.")
 
-            if (filteredCandidates.size >= 4) {
-                val minX = filteredCandidates.minOf { it.boundingBox.left }.toFloat()
-                val maxX = filteredCandidates.maxOf { it.boundingBox.right }.toFloat()
-                val minY = filteredCandidates.minOf { it.boundingBox.top }.toFloat()
-                val maxY = filteredCandidates.maxOf { it.boundingBox.bottom }.toFloat()
+            if (candidateDigits.size >= 4) {
+                // In Sudoku, puzzle digits form a dense 2D cluster compared to isolated page numbers
+                val clusterRadius = min(bitmap.width, bitmap.height) * 0.45f
 
-                val clusterW = maxX - minX
-                val clusterH = maxY - minY
-
-                // Sudoku puzzles are square. Expand with 15-20% margin for borders
-                val baseSide = max(clusterW, clusterH)
-                val paddedSide = baseSide * 1.25f
-
-                val cx = (minX + maxX) / 2f
-                val cy = (minY + maxY) / 2f
-
-                var left = cx - paddedSide / 2f
-                var right = cx + paddedSide / 2f
-                var top = cy - paddedSide / 2f
-                var bottom = cy + paddedSide / 2f
-
-                if (left < 0f) {
-                    right = min(bitmap.width.toFloat(), right - left)
-                    left = 0f
-                }
-                if (right > bitmap.width.toFloat()) {
-                    val overflow = right - bitmap.width.toFloat()
-                    left = max(0f, left - overflow)
-                    right = bitmap.width.toFloat()
-                }
-                if (top < 0f) {
-                    bottom = min(bitmap.height.toFloat(), bottom - top)
-                    top = 0f
-                }
-                if (bottom > bitmap.height.toFloat()) {
-                    val overflow = bottom - bitmap.height.toFloat()
-                    top = max(0f, top - overflow)
-                    bottom = bitmap.height.toFloat()
+                val scored = candidateDigits.map { c ->
+                    val neighbors = candidateDigits.count { other ->
+                        other !== c && Math.hypot(
+                            (other.centerX - c.centerX).toDouble(),
+                            (other.centerY - c.centerY).toDouble()
+                        ) <= clusterRadius
+                    }
+                    c to neighbors
                 }
 
-                val normLeft = (left / bitmap.width).coerceIn(0f, 0.9f)
-                val normTop = (top / bitmap.height).coerceIn(0f, 0.9f)
-                val normRight = (right / bitmap.width).coerceIn(normLeft + 0.1f, 1f)
-                val normBottom = (bottom / bitmap.height).coerceIn(normTop + 0.1f, 1f)
+                val maxNeighbors = scored.maxOfOrNull { it.second } ?: 0
+                val puzzleCluster = if (maxNeighbors >= 3) {
+                    val core = scored.maxByOrNull { it.second }!!.first
+                    candidateDigits.filter { c ->
+                        Math.hypot(
+                            (c.centerX - core.centerX).toDouble(),
+                            (c.centerY - core.centerY).toDouble()
+                        ) <= clusterRadius * 1.15f
+                    }
+                } else {
+                    candidateDigits
+                }
 
-                Log.d(TAG, "[AutoCrop] Successfully detected Sudoku cluster (${filteredCandidates.size} digits): [$normLeft, $normTop, $normRight, $normBottom]")
-                return@withContext RectF(normLeft, normTop, normRight, normBottom)
+                if (puzzleCluster.size >= 4) {
+                    val minX = puzzleCluster.minOf { it.boundingBox.left }.toFloat()
+                    val maxX = puzzleCluster.maxOf { it.boundingBox.right }.toFloat()
+                    val minY = puzzleCluster.minOf { it.boundingBox.top }.toFloat()
+                    val maxY = puzzleCluster.maxOf { it.boundingBox.bottom }.toFloat()
+
+                    val clusterW = maxX - minX
+                    val clusterH = maxY - minY
+                    val baseSide = max(clusterW, clusterH)
+
+                    // Expand 20% margin for borders and grid lines
+                    val paddedSide = baseSide * 1.25f
+
+                    val cx = (minX + maxX) / 2f
+                    val cy = (minY + maxY) / 2f
+
+                    var left = cx - paddedSide / 2f
+                    var right = cx + paddedSide / 2f
+                    var top = cy - paddedSide / 2f
+                    var bottom = cy + paddedSide / 2f
+
+                    if (left < 0f) {
+                        right = min(bitmap.width.toFloat(), right - left)
+                        left = 0f
+                    }
+                    if (right > bitmap.width.toFloat()) {
+                        val overflow = right - bitmap.width.toFloat()
+                        left = max(0f, left - overflow)
+                        right = bitmap.width.toFloat()
+                    }
+                    if (top < 0f) {
+                        bottom = min(bitmap.height.toFloat(), bottom - top)
+                        top = 0f
+                    }
+                    if (bottom > bitmap.height.toFloat()) {
+                        val overflow = bottom - bitmap.height.toFloat()
+                        top = max(0f, top - overflow)
+                        bottom = bitmap.height.toFloat()
+                    }
+
+                    val normLeft = (left / bitmap.width).coerceIn(0f, 0.85f)
+                    val normTop = (top / bitmap.height).coerceIn(0f, 0.85f)
+                    val normRight = (right / bitmap.width).coerceIn(normLeft + 0.15f, 1f)
+                    val normBottom = (bottom / bitmap.height).coerceIn(normTop + 0.15f, 1f)
+
+                    Log.d(TAG, "[AutoCrop] Clustered ${puzzleCluster.size} digits into crop box: [$normLeft, $normTop, $normRight, $normBottom]")
+                    return@withContext RectF(normLeft, normTop, normRight, normBottom)
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "[AutoCrop] Error auto-detecting bounds: ${e.message}")
@@ -176,9 +200,9 @@ object SudokuOcrEngine {
             recognizer.close()
         }
 
-        // Fallback: Centered 82% square
+        // Fallback: Centered 85% square
         val minDim = min(bitmap.width, bitmap.height).toFloat()
-        val side = minDim * 0.82f
+        val side = minDim * 0.85f
         val cx = bitmap.width / 2f
         val cy = bitmap.height / 2f
         val left = ((cx - side / 2f) / bitmap.width).coerceIn(0f, 1f)
@@ -242,8 +266,6 @@ object SudokuOcrEngine {
                                         isExactDigit = isExact
                                     )
                                 )
-                            } else {
-                                Log.d(TAG, "[OCR] Rejected symbol '$ch' as line/noise artifact: box=${sBox.toShortString()}")
                             }
                         }
                     } else if (text.length == 1) {
@@ -261,8 +283,6 @@ object SudokuOcrEngine {
                                         isExactDigit = isExact
                                     )
                                 )
-                            } else {
-                                Log.d(TAG, "[OCR] Rejected single char '${text[0]}' as line/noise artifact: box=${box.toShortString()}")
                             }
                         }
                     } else {
@@ -302,36 +322,24 @@ object SudokuOcrEngine {
     }
 
     /**
-     * Rejects vertical grid borders, divider lines, and tiny speckle noise that ML Kit
-     * commonly misclassifies as digits (especially vertical bar '|' or '1').
+     * Rejects extreme line artifacts while keeping all genuine digits.
      */
     private fun isValidDigitGeometry(box: Rect, digit: Int, isExactDigit: Boolean): Boolean {
         val w = box.width().toFloat()
         val h = box.height().toFloat()
 
-        // Reject noise specks
-        if (w < 3.5f || h < 7f) return false
-
+        if (w < 2.5f || h < 4.5f) return false
         val aspectRatio = h / max(1f, w)
 
-        // A printed digit typically has height/width between 1.0 and 3.5.
-        // Vertical grid lines or box borders have aspect ratios > 4.2.
-        if (aspectRatio > 4.2f) {
-            return false
+        if (isExactDigit) {
+            // For recognized digits '1'..'9', only reject extreme vertical/horizontal lines
+            if (aspectRatio > 6.0f || aspectRatio < 0.12f) return false
+            return true
+        } else {
+            // Letters like 'l', 'I', 'S', etc.
+            if (aspectRatio > 3.8f || aspectRatio < 0.28f || w < 4f) return false
+            return true
         }
-
-        // Horizontal line artifacts (e.g. underline or top border segments)
-        if (aspectRatio < 0.22f) {
-            return false
-        }
-
-        // If the character was not an exact digit 1-9 (e.g. substitute 'l' or 'I'):
-        // require strict geometry so grid lines are not mistaken for 1.
-        if (!isExactDigit) {
-            if (aspectRatio > 3.2f || w < 5f) return false
-        }
-
-        return true
     }
 
     private fun fitSudokuGrid(
@@ -347,24 +355,121 @@ object SudokuOcrEngine {
             )
         }
 
-        // Remove noise, line artifacts, and isolated page headers/footers
         val filteredCandidates = filterCandidatesByGeometryAndOutliers(rawCandidates)
-        Log.d(TAG, "[OCR] Candidates after outlier and size filtering: ${filteredCandidates.size} (was ${rawCandidates.size})")
+        val candidatesToUse = if (filteredCandidates.size >= 4) filteredCandidates else rawCandidates
+        Log.d(TAG, "[OCR] Candidates to fit: ${candidatesToUse.size} (raw: ${rawCandidates.size})")
 
-        if (filteredCandidates.size < 4) {
-            return OcrResult(
-                board = SudokuBoard.EMPTY,
-                detectedCount = 0,
-                message = "Could not isolate Sudoku grid from surrounding text."
-            )
+        val heights = candidatesToUse.map { it.boundingBox.height().toFloat() }.sorted()
+        val medianH = if (heights.isNotEmpty()) heights[heights.size / 2] else 20f
+
+        var bestScore = -1f
+        var bestCells = MutableList(81) { 0 }
+        var bestGridRect: Rect? = null
+
+        fun evaluateHypothesis(
+            gridLeft: Float,
+            gridTop: Float,
+            gridRight: Float,
+            gridBottom: Float,
+            hypName: String
+        ) {
+            val gridW = gridRight - gridLeft
+            val gridH = gridBottom - gridTop
+            if (gridW <= 20f || gridH <= 20f) return
+            val cellW = gridW / 9f
+            val cellH = gridH / 9f
+
+            val placedMap = mutableMapOf<Int, PlacedClue>()
+            var conflictsCount = 0
+
+            for (d in candidatesToUse) {
+                val col = ((d.centerX - gridLeft) / cellW).toInt()
+                val row = ((d.centerY - gridTop) / cellH).toInt()
+
+                if (col in 0..8 && row in 0..8) {
+                    val expectedCx = gridLeft + (col + 0.5f) * cellW
+                    val expectedCy = gridTop + (row + 0.5f) * cellH
+                    val dx = abs(d.centerX - expectedCx) / cellW
+                    val dy = abs(d.centerY - expectedCy) / cellH
+                    val dist = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+
+                    // Tolerant cell proximity: Sudoku digits can be slightly off-center
+                    if (dx > 0.46f || dy > 0.46f || dist > 0.62f) {
+                        continue
+                    }
+
+                    val cellIndex = row * 9 + col
+                    val centerScore = (1.0f - dist).coerceIn(0f, 1f) * 40f
+                    val heightDev = abs(d.boundingBox.height() - medianH) / max(1f, medianH)
+                    val sizeScore = (1.0f - heightDev).coerceIn(0f, 1f) * 30f
+                    val charScore = if (d.isExactDigit) 30f else 10f
+                    val candidateScore = centerScore + sizeScore + charScore
+
+                    val candidateClue = PlacedClue(
+                        digit = d.digit,
+                        detection = d,
+                        score = candidateScore,
+                        row = row,
+                        col = col
+                    )
+
+                    val existingConflicts = placedMap.values.filter { existing ->
+                        existing.digit == d.digit && (
+                            existing.row == row ||
+                            existing.col == col ||
+                            (existing.row / 3 == row / 3 && existing.col / 3 == col / 3)
+                        )
+                    }
+
+                    if (existingConflicts.isEmpty()) {
+                        val currentCell = placedMap[cellIndex]
+                        if (currentCell == null || candidateScore > currentCell.score) {
+                            placedMap[cellIndex] = candidateClue
+                        }
+                    } else {
+                        conflictsCount++
+                        val conflicting = existingConflicts.first()
+                        if (candidateScore > conflicting.score + 10f) {
+                            placedMap.remove(conflicting.row * 9 + conflicting.col)
+                            placedMap[cellIndex] = candidateClue
+                        }
+                    }
+                }
+            }
+
+            val score = placedMap.size * 15f - conflictsCount * 12f
+            if (score > bestScore) {
+                bestScore = score
+                val resultCells = MutableList(81) { 0 }
+                for ((idx, clue) in placedMap) {
+                    resultCells[idx] = clue.digit
+                }
+                bestCells = resultCells
+                bestGridRect = Rect(
+                    max(0, gridLeft.roundToInt()),
+                    max(0, gridTop.roundToInt()),
+                    min(imageWidth, gridRight.roundToInt()),
+                    min(imageHeight, gridBottom.roundToInt())
+                )
+            }
         }
 
+        // --- Hypothesis Group 1: Image Boundary Grids ---
+        for (margin in listOf(0.0f, 0.015f, 0.03f, 0.05f, 0.08f, 0.12f)) {
+            val gLeft = imageWidth * margin
+            val gTop = imageHeight * margin
+            val gRight = imageWidth * (1f - margin)
+            val gBottom = imageHeight * (1f - margin)
+            evaluateHypothesis(gLeft, gTop, gRight, gBottom, "ImageMargin-$margin")
+        }
+
+        // --- Hypothesis Group 2: Digit Spanning Combinations ---
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
         var maxX = Float.MIN_VALUE
         var maxY = Float.MIN_VALUE
 
-        for (d in filteredCandidates) {
+        for (d in candidatesToUse) {
             minX = min(minX, d.centerX)
             minY = min(minY, d.centerY)
             maxX = max(maxX, d.centerX)
@@ -374,132 +479,21 @@ object SudokuOcrEngine {
         val spanX = maxX - minX
         val spanY = maxY - minY
 
-        if (spanX <= 10f || spanY <= 10f) {
-            return OcrResult(
-                board = SudokuBoard.EMPTY,
-                detectedCount = 0,
-                message = "Detected digits are too clustered."
-            )
-        }
+        if (spanX > 15f && spanY > 15f) {
+            for (kx in 4..8) {
+                for (ky in 4..8) {
+                    val cellW = spanX / kx
+                    val cellH = spanY / ky
+                    val aspect = cellW / cellH
+                    if (aspect !in 0.65f..1.55f) continue
 
-        // Calculate median digit height for confidence scoring
-        val heights = filteredCandidates.map { it.boundingBox.height().toFloat() }.sorted()
-        val medianH = heights[heights.size / 2]
-
-        // Test grid alignment configurations across possible outer row/col spans
-        var bestScore = -1f
-        var bestCells = MutableList(81) { 0 }
-        var bestGridRect: Rect? = null
-
-        val testSteps = listOf(8, 7, 6)
-        val testOffsets = listOf(0, 1)
-
-        for (kx in testSteps) {
-            for (ky in testSteps) {
-                val cellW = spanX / kx
-                val cellH = spanY / ky
-
-                // Sudoku cells are roughly square
-                val aspect = cellW / cellH
-                if (aspect !in 0.70f..1.42f) continue
-
-                for (ox in testOffsets) {
-                    for (oy in testOffsets) {
-                        val gridLeft = minX - (ox + 0.5f) * cellW
-                        val gridTop = minY - (oy + 0.5f) * cellH
-                        val gridRight = gridLeft + 9f * cellW
-                        val gridBottom = gridTop + 9f * cellH
-
-                        // Grid bounds check
-                        val placedMap = mutableMapOf<Int, PlacedClue>() // cellIndex -> PlacedClue
-                        var conflictPenalties = 0
-
-                        for (d in filteredCandidates) {
-                            val col = ((d.centerX - gridLeft) / cellW).toInt()
-                            val row = ((d.centerY - gridTop) / cellH).toInt()
-
-                            if (col in 0..8 && row in 0..8) {
-                                val expectedCx = gridLeft + (col + 0.5f) * cellW
-                                val expectedCy = gridTop + (row + 0.5f) * cellH
-                                val dx = abs(d.centerX - expectedCx) / cellW
-                                val dy = abs(d.centerY - expectedCy) / cellH
-                                val dist = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
-
-                                // Strict center proximity: Sudoku digits are centered in each cell.
-                                // Rejects grid line segments located along cell edges.
-                                if (dist > 0.36f || dx > 0.32f || dy > 0.32f) {
-                                    continue
-                                }
-
-                                // Reject border line artifacts touching the puzzle's outer borders
-                                if (row == 0 && d.boundingBox.top <= gridTop + 0.08f * cellH) continue
-                                if (row == 8 && d.boundingBox.bottom >= gridBottom - 0.08f * cellH) continue
-                                if (col == 0 && d.boundingBox.left <= gridLeft + 0.08f * cellW) continue
-                                if (col == 8 && d.boundingBox.right >= gridRight - 0.08f * cellW) continue
-
-                                val cellIndex = row * 9 + col
-
-                                // Compute quality score for this candidate
-                                val centerScore = (1.0f - dist).coerceIn(0f, 1f) * 40f
-                                val heightDev = abs(d.boundingBox.height() - medianH) / max(1f, medianH)
-                                val sizeScore = (1.0f - heightDev).coerceIn(0f, 1f) * 30f
-                                val charScore = if (d.isExactDigit) 30f else 10f
-                                val candidateScore = centerScore + sizeScore + charScore
-
-                                val candidateClue = PlacedClue(
-                                    digit = d.digit,
-                                    detection = d,
-                                    score = candidateScore,
-                                    row = row,
-                                    col = col
-                                )
-
-                                // Check for duplicates in same row, column, or 3x3 box (Sudoku Rules)
-                                val existingConflicts = placedMap.values.filter { existing ->
-                                    existing.digit == d.digit && (
-                                            existing.row == row ||
-                                                    existing.col == col ||
-                                                    (existing.row / 3 == row / 3 && existing.col / 3 == col / 3)
-                                            )
-                                }
-
-                                if (existingConflicts.isEmpty()) {
-                                    val currentCellClue = placedMap[cellIndex]
-                                    if (currentCellClue == null) {
-                                        placedMap[cellIndex] = candidateClue
-                                    } else if (candidateScore > currentCellClue.score) {
-                                        placedMap[cellIndex] = candidateClue
-                                    }
-                                } else {
-                                    // Sudoku conflict detected! Resolve by keeping the candidate with higher confidence.
-                                    val conflicting = existingConflicts.first()
-                                    if (candidateScore > conflicting.score + 8f) {
-                                        // The new candidate is significantly more centered and confident
-                                        placedMap.remove(conflicting.row * 9 + conflicting.col)
-                                        placedMap[cellIndex] = candidateClue
-                                        conflictPenalties++
-                                    } else {
-                                        // Discard the weaker conflicting candidate (e.g. false '1' from grid border)
-                                        conflictPenalties++
-                                    }
-                                }
-                            }
-                        }
-
-                        val score = placedMap.size * 12f - conflictPenalties * 10f
-                        if (score > bestScore) {
-                            bestScore = score
-                            val resultCells = MutableList(81) { 0 }
-                            for ((idx, clue) in placedMap) {
-                                resultCells[idx] = clue.digit
-                            }
-                            bestCells = resultCells
-                            bestGridRect = Rect(
-                                max(0, gridLeft.roundToInt()),
-                                max(0, gridTop.roundToInt()),
-                                min(imageWidth, gridRight.roundToInt()),
-                                min(imageHeight, gridBottom.roundToInt())
-                            )
+                    for (ox in 0..(8 - kx)) {
+                        for (oy in 0..(8 - ky)) {
+                            val gLeft = minX - (ox + 0.5f) * cellW
+                            val gTop = minY - (oy + 0.5f) * cellH
+                            val gRight = gLeft + 9f * cellW
+                            val gBottom = gTop + 9f * cellH
+                            evaluateHypothesis(gLeft, gTop, gRight, gBottom, "Span-$kx-$ky-$ox-$oy")
                         }
                     }
                 }
@@ -512,7 +506,7 @@ object SudokuOcrEngine {
                 board = SudokuBoard.EMPTY,
                 detectedCount = 0,
                 gridBounds = bestGridRect,
-                message = "Grid alignment found fewer than 4 clues. Try snapping closer to the puzzle."
+                message = "Grid alignment found fewer than 4 clues. Try framing closer to the puzzle."
             )
         }
 
@@ -553,12 +547,13 @@ object SudokuOcrEngine {
         val sizeFiltered = candidates.filter { d ->
             val h = d.boundingBox.height().toFloat()
             val w = d.boundingBox.width().toFloat()
-            val validHeight = h in (0.45f * medianH)..(1.9f * medianH)
-            val validWidth = w in (0.16f * medianW)..(2.3f * medianW)
+            // Generous bounds so thin '1' digits and bold numbers are preserved
+            val validHeight = h in (0.30f * medianH)..(2.5f * medianH)
+            val validWidth = w in (0.08f * medianW)..(3.2f * medianW)
             validHeight && validWidth
         }
 
-        if (sizeFiltered.size <= 6) return sizeFiltered
+        if (sizeFiltered.size <= 6) return candidates
 
         // 2. Sort by Y and identify median vertical gap between adjacent digits (headers/footers)
         val sortedY = sizeFiltered.sortedBy { it.centerY }

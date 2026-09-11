@@ -340,6 +340,41 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * Nudges crop box horizontally and vertically by normalized delta amounts.
+     */
+    fun nudgeCrop(dx: Float, dy: Float) {
+        val curr = _cropRect.value
+        val width = curr.width()
+        val height = curr.height()
+        val newLeft = (curr.left + dx).coerceIn(0f, 1f - width)
+        val newTop = (curr.top + dy).coerceIn(0f, 1f - height)
+        val newRight = (newLeft + width).coerceIn(0.1f, 1f)
+        val newBottom = (newTop + height).coerceIn(0.1f, 1f)
+        _cropRect.value = RectF(newLeft, newTop, newRight, newBottom)
+    }
+
+    /**
+     * Expands (scaleDelta > 0) or shrinks (scaleDelta < 0) the crop box centered.
+     */
+    fun scaleCrop(scaleDelta: Float) {
+        val curr = _cropRect.value
+        val cx = curr.centerX()
+        val cy = curr.centerY()
+        val halfW = (curr.width() * (1f + scaleDelta) / 2f).coerceIn(0.06f, 0.5f)
+        val halfH = (curr.height() * (1f + scaleDelta) / 2f).coerceIn(0.06f, 0.5f)
+
+        var l = (cx - halfW).coerceIn(0f, 1f)
+        var r = (cx + halfW).coerceIn(0f, 1f)
+        var t = (cy - halfH).coerceIn(0f, 1f)
+        var b = (cy + halfH).coerceIn(0f, 1f)
+
+        if (r - l < 0.12f) r = (l + 0.12f).coerceAtMost(1f)
+        if (b - t < 0.12f) b = (t + 0.12f).coerceAtMost(1f)
+
+        _cropRect.value = RectF(l, t, r, b)
+    }
+
+    /**
      * Rotates current crop bitmap 90 degrees clockwise.
      */
     fun rotateCropImageClockwise() {
