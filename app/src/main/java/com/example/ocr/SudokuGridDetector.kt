@@ -408,18 +408,26 @@ object SudokuGridDetector {
                 val dy = abs(d.centerY - expectedCy) / cellH
                 val dist = sqrt(dx * dx + dy * dy)
 
-                // Safe cell interior check: reject candidates outside 0.38 cell-width from center
-                // This guarantees adjacent cells and vertical grid lines are never swallowed!
-                if (dx > 0.38f || dy > 0.38f || dist > 0.50f) {
+                // Safe cell interior check: reject candidates outside 0.32 cell-width from center
+                // Real Sudoku digits are centered; this guarantees grid lines and adjacent artifacts are rejected.
+                if (dx > 0.32f || dy > 0.32f || dist > 0.42f) {
                     continue
                 }
 
-                // Grid line artifact filter: thin vertical sliver near cell border is not a 1
-                if (!d.isExactDigit || d.originalChar == '1' || d.originalChar == 'I' || d.originalChar == 'l') {
+                // Grid line artifact filter & inexact char validation
+                if (!d.isExactDigit) {
+                    // Inexact candidates (OCR substitutions) must be well-centered and must not be punctuation/line slivers
+                    if (dx > 0.20f || dy > 0.20f || d.originalChar !in listOf('l', 'I', 'Z', 'z', 'S', 's', 'G', 'b', 'B', 'q')) {
+                        continue
+                    }
+                }
+
+                // Check for vertical sliver artifact (e.g. grid border fragment recognized as '1' or 'l')
+                if (d.digit == 1) {
                     val w = d.boundingBox.width().toFloat()
                     val h = d.boundingBox.height().toFloat()
-                    if (w < cellW * 0.12f && h > cellH * 0.35f && dx > 0.28f) {
-                        continue // Discard grid line border fragment
+                    if (w < cellW * 0.15f && dx > 0.22f) {
+                        continue
                     }
                 }
 

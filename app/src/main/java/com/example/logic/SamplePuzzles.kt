@@ -28,6 +28,12 @@ object SamplePuzzles {
             difficulty = "Hard",
             sdm = "800000000003600000070090200050007000000045700000100030001000068008500010090000400",
             description = "24 clues with advanced logic deductions required."
+        ),
+        SamplePuzzle(
+            title = "Modern Expert",
+            difficulty = "Expert",
+            sdm = "530070000600195000098000060800060003400803001700020006060000280000419005000080079",
+            description = "Master-level puzzle with 30 clues and complex elimination chains."
         )
     )
 
