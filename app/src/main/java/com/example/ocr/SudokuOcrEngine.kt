@@ -214,140 +214,13 @@ object SudokuOcrEngine {
         RectF(left, top, right, bottom)
     }
 
-    private fun scanSingleBitmap(
-        recognizer: com.google.mlkit.vision.text.TextRecognizer,
-        bitmap: Bitmap,
-        passName: String
-    ): OcrResult {
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
-        val visionText = Tasks.await(recognizer.process(inputImage))
-
-        Log.d(TAG, "[OCR][$passName] ML Kit extracted ${visionText.textBlocks.size} text blocks.")
-
-        val candidateDigits = extractCandidateDigits(visionText)
-        Log.d(TAG, "[OCR][$passName] Raw candidate digits extracted: ${candidateDigits.size}")
-
-        if (candidateDigits.size < 4) {
-            return OcrResult(
-                board = SudokuBoard.EMPTY,
-                detectedCount = 0,
-                message = "No Sudoku digits found. Please ensure the puzzle is centered and in focus."
-            )
-        }
-
-        return fitSudokuGrid(candidateDigits, bitmap.width, bitmap.height)
-    }
-
-    private fun extractCandidateDigits(visionText: Text): List<DigitDetection> {
-        val candidates = mutableListOf<DigitDetection>()
-
-        for (block in visionText.textBlocks) {
-            for (line in block.lines) {
-                for (element in line.elements) {
-                    val box = element.boundingBox ?: continue
-                    val text = element.text.trim()
-
-                    // Try using individual ML Kit symbols if available
-                    if (element.symbols.isNotEmpty()) {
-                        for (symbol in element.symbols) {
-                            val ch = symbol.text.trim().firstOrNull() ?: continue
-                            val parsed = parseSingleCharToDigit(ch) ?: continue
-                            val (digit, isExact) = parsed
-                            val sBox = symbol.boundingBox ?: box
-
-                            if (isValidDigitGeometry(sBox, digit, isExact)) {
-                                candidates.add(
-                                    DigitDetection(
-                                        digit = digit,
-                                        centerX = sBox.exactCenterX(),
-                                        centerY = sBox.exactCenterY(),
-                                        boundingBox = sBox,
-                                        originalChar = ch,
-                                        isExactDigit = isExact
-                                    )
-                                )
-                            }
-                        }
-                    } else if (text.length == 1) {
-                        val parsed = parseSingleCharToDigit(text[0])
-                        if (parsed != null) {
-                            val (digit, isExact) = parsed
-                            if (isValidDigitGeometry(box, digit, isExact)) {
-                                candidates.add(
-                                    DigitDetection(
-                                        digit = digit,
-                                        centerX = box.exactCenterX(),
-                                        centerY = box.exactCenterY(),
-                                        boundingBox = box,
-                                        originalChar = text[0],
-                                        isExactDigit = isExact
-                                    )
-                                )
-                            }
-                        }
-                    } else {
-                        // Multi-char word: only check single isolated digits with clean bounds
-                        val chars = text.toCharArray()
-                        val charWidth = box.width().toFloat() / max(1, chars.size)
-                        for ((i, ch) in chars.withIndex()) {
-                            val parsed = parseSingleCharToDigit(ch) ?: continue
-                            val (digit, isExact) = parsed
-                            val cx = box.left + (i + 0.5f) * charWidth
-                            val cy = box.exactCenterY()
-                            val sBox = Rect(
-                                (box.left + i * charWidth).toInt(),
-                                box.top,
-                                (box.left + (i + 1) * charWidth).toInt(),
-                                box.bottom
-                            )
-                            if (isValidDigitGeometry(sBox, digit, isExact)) {
-                                candidates.add(
-                                    DigitDetection(
-                                        digit = digit,
-                                        centerX = cx,
-                                        centerY = cy,
-                                        boundingBox = sBox,
-                                        originalChar = ch,
-                                        isExactDigit = isExact
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return candidates
-    }
-
-    /**
-     * Rejects extreme line artifacts while keeping all genuine digits.
-     */
-    private fun isValidDigitGeometry(box: Rect, digit: Int, isExactDigit: Boolean): Boolean {
-        val w = box.width().toFloat()
-        val h = box.height().toFloat()
-
-        if (w < 2.5f || h < 4.5f) return false
-        val aspectRatio = h / max(1f, w)
-
-        if (isExactDigit) {
-            // For recognized digits '1'..'9', only reject extreme vertical/horizontal lines
-            if (aspectRatio > 6.0f || aspectRatio < 0.12f) return false
-            return true
-        } else {
-            // Letters like 'l', 'I', 'S', etc.
-            if (aspectRatio > 3.8f || aspectRatio < 0.28f || w < 4f) return false
-            return true
-        }
-    }
-
-    private fun fitSudokuGrid(
+    fun fitSudokuGrid(
         rawCandidates: List<DigitDetection>,
         imageWidth: Int,
-        imageHeight: Int
+        imageHeight: Int,
+        visualGrid: SudokuGridDetector.GridGeometry? = null
     ): OcrResult {
-        if (rawCandidates.size < 4) {
+        if (rawCandidates.size < 4 && visualGrid == null) {
             return OcrResult(
                 board = SudokuBoard.EMPTY,
                 detectedCount = 0,
@@ -359,148 +232,21 @@ object SudokuOcrEngine {
         val candidatesToUse = if (filteredCandidates.size >= 4) filteredCandidates else rawCandidates
         Log.d(TAG, "[OCR] Candidates to fit: ${candidatesToUse.size} (raw: ${rawCandidates.size})")
 
-        val heights = candidatesToUse.map { it.boundingBox.height().toFloat() }.sorted()
-        val medianH = if (heights.isNotEmpty()) heights[heights.size / 2] else 20f
+        val fitResult = SudokuGridDetector.fitDigitsToGrid(
+            candidates = candidatesToUse,
+            imageWidth = imageWidth,
+            imageHeight = imageHeight,
+            visualGrid = visualGrid
+        )
 
-        var bestScore = -1f
-        var bestCells = MutableList(81) { 0 }
-        var bestGridRect: Rect? = null
-
-        fun evaluateHypothesis(
-            gridLeft: Float,
-            gridTop: Float,
-            gridRight: Float,
-            gridBottom: Float,
-            hypName: String
-        ) {
-            val gridW = gridRight - gridLeft
-            val gridH = gridBottom - gridTop
-            if (gridW <= 20f || gridH <= 20f) return
-            val cellW = gridW / 9f
-            val cellH = gridH / 9f
-
-            val placedMap = mutableMapOf<Int, PlacedClue>()
-            var conflictsCount = 0
-
-            for (d in candidatesToUse) {
-                val col = ((d.centerX - gridLeft) / cellW).toInt()
-                val row = ((d.centerY - gridTop) / cellH).toInt()
-
-                if (col in 0..8 && row in 0..8) {
-                    val expectedCx = gridLeft + (col + 0.5f) * cellW
-                    val expectedCy = gridTop + (row + 0.5f) * cellH
-                    val dx = abs(d.centerX - expectedCx) / cellW
-                    val dy = abs(d.centerY - expectedCy) / cellH
-                    val dist = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
-
-                    // Tolerant cell proximity: Sudoku digits can be slightly off-center
-                    if (dx > 0.46f || dy > 0.46f || dist > 0.62f) {
-                        continue
-                    }
-
-                    val cellIndex = row * 9 + col
-                    val centerScore = (1.0f - dist).coerceIn(0f, 1f) * 40f
-                    val heightDev = abs(d.boundingBox.height() - medianH) / max(1f, medianH)
-                    val sizeScore = (1.0f - heightDev).coerceIn(0f, 1f) * 30f
-                    val charScore = if (d.isExactDigit) 30f else 10f
-                    val candidateScore = centerScore + sizeScore + charScore
-
-                    val candidateClue = PlacedClue(
-                        digit = d.digit,
-                        detection = d,
-                        score = candidateScore,
-                        row = row,
-                        col = col
-                    )
-
-                    val existingConflicts = placedMap.values.filter { existing ->
-                        existing.digit == d.digit && (
-                            existing.row == row ||
-                            existing.col == col ||
-                            (existing.row / 3 == row / 3 && existing.col / 3 == col / 3)
-                        )
-                    }
-
-                    if (existingConflicts.isEmpty()) {
-                        val currentCell = placedMap[cellIndex]
-                        if (currentCell == null || candidateScore > currentCell.score) {
-                            placedMap[cellIndex] = candidateClue
-                        }
-                    } else {
-                        conflictsCount++
-                        val conflicting = existingConflicts.first()
-                        if (candidateScore > conflicting.score + 10f) {
-                            placedMap.remove(conflicting.row * 9 + conflicting.col)
-                            placedMap[cellIndex] = candidateClue
-                        }
-                    }
-                }
-            }
-
-            val score = placedMap.size * 15f - conflictsCount * 12f
-            if (score > bestScore) {
-                bestScore = score
-                val resultCells = MutableList(81) { 0 }
-                for ((idx, clue) in placedMap) {
-                    resultCells[idx] = clue.digit
-                }
-                bestCells = resultCells
-                bestGridRect = Rect(
-                    max(0, gridLeft.roundToInt()),
-                    max(0, gridTop.roundToInt()),
-                    min(imageWidth, gridRight.roundToInt()),
-                    min(imageHeight, gridBottom.roundToInt())
-                )
-            }
+        val bestCells = MutableList(81) { 0 }
+        for ((idx, clue) in fitResult.placedClues) {
+            bestCells[idx] = clue.digit
         }
 
-        // --- Hypothesis Group 1: Image Boundary Grids ---
-        for (margin in listOf(0.0f, 0.015f, 0.03f, 0.05f, 0.08f, 0.12f)) {
-            val gLeft = imageWidth * margin
-            val gTop = imageHeight * margin
-            val gRight = imageWidth * (1f - margin)
-            val gBottom = imageHeight * (1f - margin)
-            evaluateHypothesis(gLeft, gTop, gRight, gBottom, "ImageMargin-$margin")
-        }
+        val detectedCount = fitResult.placedClues.size
+        val bestGridRect = fitResult.geometry.toRect()
 
-        // --- Hypothesis Group 2: Digit Spanning Combinations ---
-        var minX = Float.MAX_VALUE
-        var minY = Float.MAX_VALUE
-        var maxX = Float.MIN_VALUE
-        var maxY = Float.MIN_VALUE
-
-        for (d in candidatesToUse) {
-            minX = min(minX, d.centerX)
-            minY = min(minY, d.centerY)
-            maxX = max(maxX, d.centerX)
-            maxY = max(maxY, d.centerY)
-        }
-
-        val spanX = maxX - minX
-        val spanY = maxY - minY
-
-        if (spanX > 15f && spanY > 15f) {
-            for (kx in 4..8) {
-                for (ky in 4..8) {
-                    val cellW = spanX / kx
-                    val cellH = spanY / ky
-                    val aspect = cellW / cellH
-                    if (aspect !in 0.65f..1.55f) continue
-
-                    for (ox in 0..(8 - kx)) {
-                        for (oy in 0..(8 - ky)) {
-                            val gLeft = minX - (ox + 0.5f) * cellW
-                            val gTop = minY - (oy + 0.5f) * cellH
-                            val gRight = gLeft + 9f * cellW
-                            val gBottom = gTop + 9f * cellH
-                            evaluateHypothesis(gLeft, gTop, gRight, gBottom, "Span-$kx-$ky-$ox-$oy")
-                        }
-                    }
-                }
-            }
-        }
-
-        val detectedCount = bestCells.count { it != 0 }
         if (detectedCount < 4) {
             return OcrResult(
                 board = SudokuBoard.EMPTY,
@@ -521,7 +267,7 @@ object SudokuOcrEngine {
             "Scanned $detectedCount clues (${validation.conflictedIndices.size} conflicting). Tap highlighted cells to correct."
         }
 
-        Log.d(TAG, "[OCR] Final placed clues: $detectedCount, valid=${validation.isValid}, gridRect=${bestGridRect?.toShortString()}")
+        Log.d(TAG, "[OCR] Final placed clues: $detectedCount, valid=${validation.isValid}, gridRect=${bestGridRect.toShortString()}")
 
         return OcrResult(
             board = board,
@@ -529,6 +275,136 @@ object SudokuOcrEngine {
             gridBounds = bestGridRect,
             message = message
         )
+    }
+
+    private fun scanSingleBitmap(
+        recognizer: com.google.mlkit.vision.text.TextRecognizer,
+        bitmap: Bitmap,
+        passName: String
+    ): OcrResult {
+        val visualGrid = SudokuGridDetector.detectVisualGridLines(bitmap)
+
+        val inputImage = InputImage.fromBitmap(bitmap, 0)
+        val visionText = Tasks.await(recognizer.process(inputImage))
+
+        Log.d(TAG, "[OCR][$passName] ML Kit extracted ${visionText.textBlocks.size} text blocks.")
+
+        val candidateDigits = extractCandidateDigits(visionText)
+        Log.d(TAG, "[OCR][$passName] Raw candidate digits extracted: ${candidateDigits.size}")
+
+        if (candidateDigits.size < 4 && visualGrid == null) {
+            return OcrResult(
+                board = SudokuBoard.EMPTY,
+                detectedCount = 0,
+                message = "No Sudoku digits found. Please ensure the puzzle is centered and in focus."
+            )
+        }
+
+        return fitSudokuGrid(candidateDigits, bitmap.width, bitmap.height, visualGrid)
+    }
+
+    fun extractCandidateDigits(visionText: Text): List<DigitDetection> {
+        val candidates = mutableListOf<DigitDetection>()
+
+        for (block in visionText.textBlocks) {
+            for (line in block.lines) {
+                for (element in line.elements) {
+                    val box = element.boundingBox ?: continue
+                    val text = element.text.trim()
+                    if (text.isEmpty()) continue
+
+                    // Check if element has exactly one clean genuine digit 1..9 (with possible border noise/punctuation)
+                    val exactDigits = text.filter { it in '1'..'9' }
+                    if (exactDigits.length == 1) {
+                        val digitChar = exactDigits[0]
+                        val digitVal = digitChar.digitToInt()
+
+                        // If element symbols are present, locate the exact symbol bounding box
+                        val matchingSymbol = element.symbols.firstOrNull { it.text.contains(digitChar) }
+                        val targetBox = matchingSymbol?.boundingBox ?: box
+
+                        if (isValidDigitGeometry(targetBox, digitVal, isExactDigit = true)) {
+                            candidates.add(
+                                DigitDetection(
+                                    digit = digitVal,
+                                    centerX = targetBox.exactCenterX(),
+                                    centerY = targetBox.exactCenterY(),
+                                    boundingBox = targetBox,
+                                    originalChar = digitChar,
+                                    isExactDigit = true
+                                )
+                            )
+                        }
+                    } else if (exactDigits.length > 1) {
+                        // Multi-digit token: process each digit individually with segmented horizontal bounds
+                        val chars = text.toCharArray()
+                        val charWidth = box.width().toFloat() / max(1, chars.size)
+                        for ((i, ch) in chars.withIndex()) {
+                            if (ch !in '1'..'9') continue
+                            val digit = ch.digitToInt()
+                            val cx = box.left + (i + 0.5f) * charWidth
+                            val cy = box.exactCenterY()
+                            val sBox = Rect(
+                                (box.left + i * charWidth).toInt(),
+                                box.top,
+                                (box.left + (i + 1) * charWidth).toInt(),
+                                box.bottom
+                            )
+                            if (isValidDigitGeometry(sBox, digit, isExactDigit = true)) {
+                                candidates.add(
+                                    DigitDetection(
+                                        digit = digit,
+                                        centerX = cx,
+                                        centerY = cy,
+                                        boundingBox = sBox,
+                                        originalChar = ch,
+                                        isExactDigit = true
+                                    )
+                                )
+                            }
+                        }
+                    } else if (text.length == 1) {
+                        // Single non-digit character (e.g. OCR misrecognized 'S' for '5' or 'Z' for '2')
+                        val parsed = parseSingleCharToDigit(text[0])
+                        if (parsed != null) {
+                            val (digit, isExact) = parsed
+                            if (isValidDigitGeometry(box, digit, isExact)) {
+                                candidates.add(
+                                    DigitDetection(
+                                        digit = digit,
+                                        centerX = box.exactCenterX(),
+                                        centerY = box.exactCenterY(),
+                                        boundingBox = box,
+                                        originalChar = text[0],
+                                        isExactDigit = isExact
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return candidates
+    }
+
+    private fun isValidDigitGeometry(box: Rect, digit: Int, isExactDigit: Boolean): Boolean {
+        val w = box.width().toFloat()
+        val h = box.height().toFloat()
+
+        if (w < 2.5f || h < 4.5f) return false
+        val aspectRatio = h / max(1f, w)
+
+        if (isExactDigit) {
+            // For recognized digits '1'..'9', only reject extreme vertical/horizontal lines
+            if (aspectRatio > 6.0f || aspectRatio < 0.12f) return false
+            return true
+        } else {
+            // Letters like 'l', 'I', 'S', etc.
+            if (aspectRatio > 3.8f || aspectRatio < 0.28f || w < 4f) return false
+            return true
+        }
     }
 
     /**

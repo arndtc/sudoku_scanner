@@ -24,6 +24,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
@@ -31,11 +34,8 @@ import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -138,7 +138,7 @@ fun ImageCropScreen(
                         modifier = Modifier.testTag("crop_rotate_btn")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.RotateRight,
+                            imageVector = Icons.AutoMirrored.Filled.RotateRight,
                             contentDescription = "Rotate 90 degrees",
                             tint = MaterialTheme.colorScheme.primary
                         )
@@ -368,7 +368,7 @@ fun ImageCropScreen(
                                     .testTag("crop_nudge_left_btn")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.KeyboardArrowLeft,
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                                     contentDescription = "Nudge left",
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -407,7 +407,7 @@ fun ImageCropScreen(
                                     .testTag("crop_nudge_right_btn")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.KeyboardArrowRight,
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     contentDescription = "Nudge right",
                                     modifier = Modifier.size(20.dp)
                                 )
