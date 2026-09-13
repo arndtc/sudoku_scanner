@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.graphics.RectF
 import android.net.Uri
 import android.widget.Toast
@@ -18,6 +19,7 @@ import com.example.logic.SamplePuzzles
 import com.example.logic.SudokuExporter
 import com.example.logic.SudokuSolver
 import com.example.logic.SudokuValidator
+import com.example.model.PerspectiveQuad
 import com.example.model.PuzzleEntity
 import com.example.model.SudokuBoard
 import com.example.ocr.DecodeResult
@@ -87,6 +89,9 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _cropSourceUri = MutableStateFlow<Uri?>(null)
     val cropSourceUri: StateFlow<Uri?> = _cropSourceUri.asStateFlow()
+
+    private val _cropQuad = MutableStateFlow(PerspectiveQuad.defaultQuad())
+    val cropQuad: StateFlow<PerspectiveQuad> = _cropQuad.asStateFlow()
 
     private val _cropRect = MutableStateFlow(RectF(0.08f, 0.08f, 0.92f, 0.92f))
     val cropRect: StateFlow<RectF> = _cropRect.asStateFlow()
@@ -265,6 +270,7 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             _cropSourceBitmap.value = bitmap
+            _cropQuad.value = PerspectiveQuad.defaultQuad()
             _cropRect.value = RectF(0.08f, 0.08f, 0.92f, 0.92f)
             _scanStatus.value = ScanStatus.Idle
             onReady()
@@ -290,12 +296,24 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setCropQuad(quad: PerspectiveQuad) {
+        _cropQuad.value = quad
+        _cropRect.value = quad.toBoundingRect()
+    }
+
+    fun setCropCorner(cornerIndex: Int, point: PointF) {
+        val updated = _cropQuad.value.withCorner(cornerIndex, point)
+        _cropQuad.value = updated
+        _cropRect.value = updated.toBoundingRect()
+    }
+
     fun setCropRect(rect: RectF) {
         _cropRect.value = rect
+        _cropQuad.value = PerspectiveQuad.fromRect(rect)
     }
 
     /**
-     * Runs auto-detection on the current crop bitmap to snap the crop box
+     * Runs auto-detection on the current crop bitmap to snap the quadrilateral
      * to the 9x9 Sudoku grid.
      */
     fun runAutoDetectCrop() {
@@ -304,8 +322,9 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
             _isAutoDetecting.value = true
             _cropDetectionMessage.value = "Detecting Sudoku grid..."
             try {
-                val detectedRect = SudokuOcrEngine.autoDetectSudokuBoundingBox(bitmap)
-                _cropRect.value = detectedRect
+                val detectedQuad = SudokuOcrEngine.autoDetectSudokuQuad(bitmap)
+                _cropQuad.value = detectedQuad
+                _cropRect.value = detectedQuad.toBoundingRect()
                 _cropDetectionMessage.value = "Sudoku grid auto-detected!"
             } catch (e: Exception) {
                 _cropDetectionMessage.value = "Default crop applied."
@@ -319,7 +338,7 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
      * Snaps current crop selection to a 1:1 square ratio centered within current selection.
      */
     fun setSquareCrop() {
-        val current = _cropRect.value
+        val current = _cropQuad.value.toBoundingRect()
         val bitmap = _cropSourceBitmap.value ?: return
         val imgWidth = bitmap.width.toFloat()
         val imgHeight = bitmap.height.toFloat()
@@ -355,12 +374,14 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
             bottom = imgHeight
         }
 
-        _cropRect.value = RectF(
+        val normRect = RectF(
             (left / imgWidth).coerceIn(0f, 0.9f),
             (top / imgHeight).coerceIn(0f, 0.9f),
             (right / imgWidth).coerceIn(0.1f, 1f),
             (bottom / imgHeight).coerceIn(0.1f, 1f)
         )
+        _cropQuad.value = PerspectiveQuad.fromRect(normRect)
+        _cropRect.value = normRect
         _cropDetectionMessage.value = "Set to 1:1 Square"
     }
 
@@ -368,43 +389,36 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
      * Resets crop selection to full image.
      */
     fun setFullCrop() {
+        _cropQuad.value = PerspectiveQuad.fullImage()
         _cropRect.value = RectF(0f, 0f, 1f, 1f)
         _cropDetectionMessage.value = "Full image selected"
     }
 
     /**
-     * Nudges crop box horizontally and vertically by normalized delta amounts.
+     * Resets quad corners to standard comfortable margins.
      */
-    fun nudgeCrop(dx: Float, dy: Float) {
-        val curr = _cropRect.value
-        val width = curr.width()
-        val height = curr.height()
-        val newLeft = (curr.left + dx).coerceIn(0f, 1f - width)
-        val newTop = (curr.top + dy).coerceIn(0f, 1f - height)
-        val newRight = (newLeft + width).coerceIn(0.1f, 1f)
-        val newBottom = (newTop + height).coerceIn(0.1f, 1f)
-        _cropRect.value = RectF(newLeft, newTop, newRight, newBottom)
+    fun resetCropCorners() {
+        _cropQuad.value = PerspectiveQuad.defaultQuad(0.08f)
+        _cropRect.value = RectF(0.08f, 0.08f, 0.92f, 0.92f)
+        _cropDetectionMessage.value = "Corners reset"
     }
 
     /**
-     * Expands (scaleDelta > 0) or shrinks (scaleDelta < 0) the crop box centered.
+     * Nudges quadrilateral horizontally and vertically by normalized delta amounts.
+     */
+    fun nudgeCrop(dx: Float, dy: Float) {
+        val updated = _cropQuad.value.nudge(dx, dy)
+        _cropQuad.value = updated
+        _cropRect.value = updated.toBoundingRect()
+    }
+
+    /**
+     * Expands (scaleDelta > 0) or shrinks (scaleDelta < 0) the quad centered.
      */
     fun scaleCrop(scaleDelta: Float) {
-        val curr = _cropRect.value
-        val cx = curr.centerX()
-        val cy = curr.centerY()
-        val halfW = (curr.width() * (1f + scaleDelta) / 2f).coerceIn(0.06f, 0.5f)
-        val halfH = (curr.height() * (1f + scaleDelta) / 2f).coerceIn(0.06f, 0.5f)
-
-        var l = (cx - halfW).coerceIn(0f, 1f)
-        var r = (cx + halfW).coerceIn(0f, 1f)
-        var t = (cy - halfH).coerceIn(0f, 1f)
-        var b = (cy + halfH).coerceIn(0f, 1f)
-
-        if (r - l < 0.12f) r = (l + 0.12f).coerceAtMost(1f)
-        if (b - t < 0.12f) b = (t + 0.12f).coerceAtMost(1f)
-
-        _cropRect.value = RectF(l, t, r, b)
+        val updated = _cropQuad.value.scale(scaleDelta)
+        _cropQuad.value = updated
+        _cropRect.value = updated.toBoundingRect()
     }
 
     /**
@@ -419,8 +433,8 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Crops the bitmap according to the current selection, saves it to cache,
-     * processes OCR on the clean cropped image, and completes navigation.
+     * De-warps the perspective quadrilateral into a rectified square puzzle image,
+     * saves it to cache, and processes OCR on the clean de-warped puzzle image.
      */
     fun applyCropAndScan(onComplete: () -> Unit) {
         val bitmap = _cropSourceBitmap.value ?: return
@@ -430,27 +444,29 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
 
             try {
                 val context = getApplication<Application>()
-                val croppedBitmap = withContext(Dispatchers.Default) {
-                    ImageUtils.cropBitmap(bitmap, _cropRect.value)
+                val activeQuad = _cropQuad.value
+                val dewarpedBitmap = withContext(Dispatchers.Default) {
+                    ImageUtils.warpPerspective(bitmap, activeQuad)
                 }
 
                 val croppedUri = withContext(Dispatchers.IO) {
-                    ImageUtils.saveCroppedBitmap(context, croppedBitmap)
+                    ImageUtils.saveCroppedBitmap(context, dewarpedBitmap)
                 }
                 if (croppedUri != null) {
                     _currentImageUri.value = croppedUri
                 }
 
-                val ocrResult = SudokuOcrEngine.recognizeSudoku(croppedBitmap)
+                val ocrResult = SudokuOcrEngine.recognizeSudoku(dewarpedBitmap)
                 val diagRecord = com.example.diagnostics.ScanDiagnosticRecord(
                     timestamp = System.currentTimeMillis(),
-                    imageWidth = croppedBitmap.width,
-                    imageHeight = croppedBitmap.height,
+                    imageWidth = dewarpedBitmap.width,
+                    imageHeight = dewarpedBitmap.height,
                     cropRect = _cropRect.value,
+                    cropQuad = activeQuad,
                     initialScannedBoard = ocrResult.board,
                     visualGridDetected = ocrResult.diagnostics?.visualGridDetected ?: false,
                     gridBounds = ocrResult.gridBounds,
-                    ocrPassUsed = ocrResult.diagnostics?.passName ?: "Standard",
+                    ocrPassUsed = ocrResult.diagnostics?.passName ?: "Standard (Perspective De-warp)",
                     rawCandidates = ocrResult.diagnostics?.rawCandidates ?: emptyList(),
                     placedCluesCount = ocrResult.detectedCount,
                     imageUri = croppedUri ?: _currentImageUri.value,

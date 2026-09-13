@@ -65,6 +65,7 @@ data class ScanDiagnosticRecord(
     val imageWidth: Int = 0,
     val imageHeight: Int = 0,
     val cropRect: RectF? = null,
+    val cropQuad: com.example.model.PerspectiveQuad? = null,
     val initialScannedBoard: SudokuBoard = SudokuBoard.EMPTY,
     val visualGridDetected: Boolean = false,
     val gridBounds: Rect? = null,
@@ -183,7 +184,9 @@ data class ScanDiagnosticRecord(
             appendLine("**Date:** $dateStr")
             appendLine("**Device:** $deviceModel ($osVersion)")
             appendLine("**Image Size:** ${imageWidth}x${imageHeight} px")
-            if (cropRect != null) {
+            if (cropQuad != null) {
+                appendLine("**Perspective Crop Applied:** TL(${ "%.2f".format(cropQuad.topLeft.x) }, ${ "%.2f".format(cropQuad.topLeft.y) }), TR(${ "%.2f".format(cropQuad.topRight.x) }, ${ "%.2f".format(cropQuad.topRight.y) }), BR(${ "%.2f".format(cropQuad.bottomRight.x) }, ${ "%.2f".format(cropQuad.bottomRight.y) }), BL(${ "%.2f".format(cropQuad.bottomLeft.x) }, ${ "%.2f".format(cropQuad.bottomLeft.y) })")
+            } else if (cropRect != null) {
                 appendLine("**Crop Applied:** [${"%.2f".format(cropRect.left)}, ${"%.2f".format(cropRect.top)}, ${"%.2f".format(cropRect.right)}, ${"%.2f".format(cropRect.bottom)}]")
             }
             appendLine()

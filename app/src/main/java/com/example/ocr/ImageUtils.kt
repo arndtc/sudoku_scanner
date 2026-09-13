@@ -18,6 +18,7 @@ import android.provider.OpenableColumns
 import android.util.Log
 import androidx.core.content.FileProvider
 import com.example.R
+import com.example.model.PerspectiveQuad
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -610,6 +611,131 @@ object ImageUtils {
 
         Log.d(TAG, "[Pipeline] Cropping bitmap (${src.width}x${src.height}) to rect: [$pxLeft, $pxTop, $width, $height]")
         return Bitmap.createBitmap(src, pxLeft, pxTop, width, height)
+    }
+
+    /**
+     * De-warps an angled perspective quadrilateral into a crisp, rectified square Sudoku image.
+     * Uses 3x3 projective homography with backward-mapping bilinear pixel interpolation
+     * to eliminate perspective skew while preserving sharp digit contours for OCR.
+     */
+    fun warpPerspective(src: Bitmap, quad: PerspectiveQuad, targetDimension: Int? = null): Bitmap {
+        val srcW = src.width
+        val srcH = src.height
+
+        // Source quad corner points in pixel coordinates
+        val pTLx = quad.topLeft.x * srcW
+        val pTLy = quad.topLeft.y * srcH
+        val pTRx = quad.topRight.x * srcW
+        val pTRy = quad.topRight.y * srcH
+        val pBRx = quad.bottomRight.x * srcW
+        val pBRy = quad.bottomRight.y * srcH
+        val pBLx = quad.bottomLeft.x * srcW
+        val pBLy = quad.bottomLeft.y * srcH
+
+        // Calculate edge lengths in source pixels
+        val topLen = Math.hypot((pTRx - pTLx).toDouble(), (pTRy - pTLy).toDouble()).toFloat()
+        val botLen = Math.hypot((pBRx - pBLx).toDouble(), (pBRy - pBLy).toDouble()).toFloat()
+        val leftLen = Math.hypot((pBLx - pTLx).toDouble(), (pBLy - pTLy).toDouble()).toFloat()
+        val rightLen = Math.hypot((pBRx - pTRx).toDouble(), (pBRy - pTRy).toDouble()).toFloat()
+
+        val naturalMax = max(max(topLen, botLen), max(leftLen, rightLen))
+        val side = targetDimension ?: naturalMax.roundToInt().coerceIn(720, 1400)
+
+        Log.d(TAG, "[Pipeline] Perspective warp: naturalSide=$naturalMax -> targetSide=$side px")
+
+        // Destination square vertices: (0,0), (side,0), (side,side), (0,side)
+        val dstPts = floatArrayOf(
+            0f, 0f,
+            side.toFloat(), 0f,
+            side.toFloat(), side.toFloat(),
+            0f, side.toFloat()
+        )
+
+        // Source quadrilateral vertices: TL, TR, BR, BL
+        val srcPts = floatArrayOf(
+            pTLx, pTLy,
+            pTRx, pTRy,
+            pBRx, pBRy,
+            pBLx, pBLy
+        )
+
+        val matrix = Matrix()
+        val success = matrix.setPolyToPoly(dstPts, 0, srcPts, 0, 4)
+
+        if (!success) {
+            Log.w(TAG, "[Pipeline] Homography setPolyToPoly failed (degenerate quad), falling back to axis-aligned crop")
+            return cropBitmap(src, quad.toBoundingRect())
+        }
+
+        val m = FloatArray(9)
+        matrix.getValues(m)
+        val h00 = m[Matrix.MSCALE_X]
+        val h01 = m[Matrix.MSKEW_X]
+        val h02 = m[Matrix.MTRANS_X]
+        val h10 = m[Matrix.MSKEW_Y]
+        val h11 = m[Matrix.MSCALE_Y]
+        val h12 = m[Matrix.MTRANS_Y]
+        val h20 = m[Matrix.MPERSP_0]
+        val h21 = m[Matrix.MPERSP_1]
+        val h22 = m[Matrix.MPERSP_2]
+
+        val srcPixels = IntArray(srcW * srcH)
+        src.getPixels(srcPixels, 0, srcW, 0, 0, srcW, srcH)
+        val dstPixels = IntArray(side * side)
+
+        for (v in 0 until side) {
+            val rowOffset = v * side
+            var xPrime = h01 * v + h02
+            var yPrime = h11 * v + h12
+            var wPrime = h21 * v + h22
+
+            for (u in 0 until side) {
+                val invW = if (wPrime != 0f) 1f / wPrime else 1f
+                val srcX = (xPrime * invW).coerceIn(0f, (srcW - 1).toFloat())
+                val srcY = (yPrime * invW).coerceIn(0f, (srcH - 1).toFloat())
+
+                xPrime += h00
+                yPrime += h10
+                wPrime += h20
+
+                val x0 = srcX.toInt().coerceIn(0, srcW - 1)
+                val y0 = srcY.toInt().coerceIn(0, srcH - 1)
+                val x1 = (x0 + 1).coerceAtMost(srcW - 1)
+                val y1 = (y0 + 1).coerceAtMost(srcH - 1)
+
+                val fx = srcX - x0
+                val fy = srcY - y0
+
+                val idx00 = y0 * srcW + x0
+                val idx10 = y0 * srcW + x1
+                val idx01 = y1 * srcW + x0
+                val idx11 = y1 * srcW + x1
+
+                val c00 = srcPixels[idx00]
+                val c10 = srcPixels[idx10]
+                val c01 = srcPixels[idx01]
+                val c11 = srcPixels[idx11]
+
+                // Bilinear interpolation for each color channel
+                val r0 = ((c00 shr 16) and 0xFF) * (1f - fx) + ((c10 shr 16) and 0xFF) * fx
+                val g0 = ((c00 shr 8) and 0xFF) * (1f - fx) + ((c10 shr 8) and 0xFF) * fx
+                val b0 = (c00 and 0xFF) * (1f - fx) + (c10 and 0xFF) * fx
+
+                val r1 = ((c01 shr 16) and 0xFF) * (1f - fx) + ((c11 shr 16) and 0xFF) * fx
+                val g1 = ((c01 shr 8) and 0xFF) * (1f - fx) + ((c11 shr 8) and 0xFF) * fx
+                val b1 = (c01 and 0xFF) * (1f - fx) + (c11 and 0xFF) * fx
+
+                val r = (r0 * (1f - fy) + r1 * fy).toInt().coerceIn(0, 255)
+                val g = (g0 * (1f - fy) + g1 * fy).toInt().coerceIn(0, 255)
+                val b = (b0 * (1f - fy) + b1 * fy).toInt().coerceIn(0, 255)
+
+                dstPixels[rowOffset + u] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+
+        val dewarped = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+        dewarped.setPixels(dstPixels, 0, side, 0, 0, side, side)
+        return dewarped
     }
 
     /**

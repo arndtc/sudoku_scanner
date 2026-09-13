@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.util.Log
 import com.example.logic.SudokuValidator
+import com.example.model.PerspectiveQuad
 import com.example.model.SudokuBoard
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.common.MlKitException
@@ -132,12 +133,24 @@ object SudokuOcrEngine {
     }
 
     /**
-     * Automatically detects the bounding box of a Sudoku puzzle within an image.
-     * Uses ML Kit text detection to cluster candidate digits and isolate the puzzle region
-     * with comfortable padding for the grid lines.
-     * Returns a normalized RectF with values in [0.0, 1.0].
+     * Automatically detects the quadrilateral bounding the Sudoku puzzle within an image.
+     * Checks physical grid lines and ML Kit text clustering.
+     * Returns a normalized PerspectiveQuad in [0.0, 1.0].
      */
-    suspend fun autoDetectSudokuBoundingBox(bitmap: Bitmap): RectF = withContext(Dispatchers.Default) {
+    suspend fun autoDetectSudokuQuad(bitmap: Bitmap): PerspectiveQuad = withContext(Dispatchers.Default) {
+        // 1. Try detecting physical grid lines first
+        try {
+            val visualGrid = SudokuGridDetector.detectVisualGridLines(bitmap)
+            if (visualGrid != null && visualGrid.cellW >= 15f && visualGrid.cellH >= 15f) {
+                val normRect = visualGrid.toNormalizedRectF(bitmap.width, bitmap.height)
+                Log.d(TAG, "[AutoCrop] Physical visual grid lines found: $normRect")
+                return@withContext PerspectiveQuad.fromRect(normRect)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[AutoCrop] Visual grid line detection failed: ${e.message}")
+        }
+
+        // 2. ML Kit candidate digit clustering
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         try {
             val inputImage = InputImage.fromBitmap(bitmap, 0)
@@ -147,7 +160,6 @@ object SudokuOcrEngine {
             Log.d(TAG, "[AutoCrop] ML Kit found ${candidateDigits.size} candidate digits in image.")
 
             if (candidateDigits.size >= 4) {
-                // In Sudoku, puzzle digits form a dense 2D cluster compared to isolated page numbers
                 val clusterRadius = min(bitmap.width, bitmap.height) * 0.45f
 
                 val scored = candidateDigits.map { c ->
@@ -183,7 +195,7 @@ object SudokuOcrEngine {
                     val clusterH = maxY - minY
                     val baseSide = max(clusterW, clusterH)
 
-                    // Expand 20% margin for borders and grid lines
+                    // Expand 20% margin for outer border
                     val paddedSide = baseSide * 1.25f
 
                     val cx = (minX + maxX) / 2f
@@ -218,8 +230,8 @@ object SudokuOcrEngine {
                     val normRight = (right / bitmap.width).coerceIn(normLeft + 0.15f, 1f)
                     val normBottom = (bottom / bitmap.height).coerceIn(normTop + 0.15f, 1f)
 
-                    Log.d(TAG, "[AutoCrop] Clustered ${puzzleCluster.size} digits into crop box: [$normLeft, $normTop, $normRight, $normBottom]")
-                    return@withContext RectF(normLeft, normTop, normRight, normBottom)
+                    Log.d(TAG, "[AutoCrop] Clustered ${puzzleCluster.size} digits into quad: [$normLeft, $normTop, $normRight, $normBottom]")
+                    return@withContext PerspectiveQuad.fromRect(RectF(normLeft, normTop, normRight, normBottom))
                 }
             }
         } catch (e: Exception) {
@@ -228,18 +240,16 @@ object SudokuOcrEngine {
             recognizer.close()
         }
 
-        // Fallback: Centered 85% square
-        val minDim = min(bitmap.width, bitmap.height).toFloat()
-        val side = minDim * 0.85f
-        val cx = bitmap.width / 2f
-        val cy = bitmap.height / 2f
-        val left = ((cx - side / 2f) / bitmap.width).coerceIn(0f, 1f)
-        val top = ((cy - side / 2f) / bitmap.height).coerceIn(0f, 1f)
-        val right = ((cx + side / 2f) / bitmap.width).coerceIn(left + 0.1f, 1f)
-        val bottom = ((cy + side / 2f) / bitmap.height).coerceIn(top + 0.1f, 1f)
+        // Fallback: Default quad
+        PerspectiveQuad.defaultQuad(0.08f)
+    }
 
-        Log.d(TAG, "[AutoCrop] Using fallback centered square: [$left, $top, $right, $bottom]")
-        RectF(left, top, right, bottom)
+    /**
+     * Automatically detects the bounding box of a Sudoku puzzle within an image.
+     * Returns a normalized RectF with values in [0.0, 1.0].
+     */
+    suspend fun autoDetectSudokuBoundingBox(bitmap: Bitmap): RectF = withContext(Dispatchers.Default) {
+        autoDetectSudokuQuad(bitmap).toBoundingRect()
     }
 
     fun fitSudokuGrid(
