@@ -401,5 +401,92 @@ class SudokuOcrTest {
         assertEquals("Phantom clue R7C1 without ink must be pruned", 0, pruned.board[6, 0])
         assertEquals("Detected count should decrease to 1", 1, pruned.detectedCount)
     }
+
+    @Test
+    fun testAnalyzeCellInkDetectsVerticalStrokeOne() {
+        val cellW = 80
+        val cellH = 80
+        val bitmap = Bitmap.createBitmap(cellW, cellH, Bitmap.Config.ARGB_8888)
+
+        // 1. Blank cell: pure white background
+        bitmap.eraseColor(Color.WHITE)
+        val blankAnalysis = SudokuOcrEngine.analyzeCellInk(bitmap, 10, 10, 70, 70)
+        assertEquals("Blank cell must not have ink", false, blankAnalysis.hasInk)
+        assertEquals("Blank cell is not vertical stroke one", false, blankAnalysis.isVerticalStrokeOne)
+
+        // 2. Paper dust speck: tiny 3x3 fleck (height < 18% of inner cell)
+        for (y in 28..30) {
+            for (x in 34..36) {
+                bitmap.setPixel(x, y, Color.BLACK)
+            }
+        }
+        val speckAnalysis = SudokuOcrEngine.analyzeCellInk(bitmap, 10, 10, 70, 70)
+        assertEquals("Tiny dust speck must be rejected as noise", false, speckAnalysis.hasInk)
+
+        // 3. Digit '1': centered vertical stroke (height 30px, width 4px in 60x60 inner box)
+        bitmap.eraseColor(Color.WHITE)
+        for (y in 25..55) {
+            for (x in 38..41) {
+                bitmap.setPixel(x, y, Color.BLACK)
+            }
+        }
+        val oneAnalysis = SudokuOcrEngine.analyzeCellInk(bitmap, 10, 10, 70, 70)
+        assertEquals("Digit 1 must have ink", true, oneAnalysis.hasInk)
+        assertEquals("Digit 1 must be detected as vertical stroke one", true, oneAnalysis.isVerticalStrokeOne)
+
+        // 4. Digit '2': wide stroke (aspect ratio < 1.8, width > 32%)
+        bitmap.eraseColor(Color.WHITE)
+        for (x in 25..55) bitmap.setPixel(x, 25, Color.BLACK)
+        for (y in 25..40) bitmap.setPixel(55, y, Color.BLACK)
+        for (x in 25..55) bitmap.setPixel(x, 40, Color.BLACK)
+        for (y in 40..55) bitmap.setPixel(25, y, Color.BLACK)
+        for (x in 25..55) bitmap.setPixel(x, 55, Color.BLACK)
+        val twoAnalysis = SudokuOcrEngine.analyzeCellInk(bitmap, 10, 10, 70, 70)
+        assertEquals("Digit 2 must have ink", true, twoAnalysis.hasInk)
+        assertEquals("Digit 2 must NOT be detected as vertical stroke one", false, twoAnalysis.isVerticalStrokeOne)
+    }
+
+    @Test
+    fun testIssue2FalsePositivePruningWithBitmap() {
+        val cellW = 80f
+        val cellH = 80f
+        val bitmap = Bitmap.createBitmap(720, 720, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(Color.WHITE)
+
+        // Draw real clue at R4C3 (row 3, col 2 => x in 160..240, y in 240..320)
+        for (y in 265..295) {
+            for (x in 198..202) {
+                bitmap.setPixel(x, y, Color.BLACK)
+            }
+        }
+
+        // Cell R7C1 (row 6, col 0 => x in 0..80, y in 480..560) is empty white paper
+
+        val cells = MutableList(81) { 0 }
+        cells[3 * 9 + 2] = 1 // R4C3: real clue with ink
+        cells[6 * 9 + 0] = 6 // R7C1: phantom false positive on blank paper
+
+        val board = com.example.model.SudokuBoard(cells = cells, isGiven = cells.map { it != 0 })
+        val diag = SudokuOcrEngine.ScanDiagnosticsInfo(
+            passName = "Standard",
+            visualGridDetected = true,
+            gridLeft = 0f,
+            gridTop = 0f,
+            cellWidth = cellW,
+            cellHeight = cellH
+        )
+        val ocrResult = SudokuOcrEngine.OcrResult(
+            board = board,
+            detectedCount = 2,
+            message = "Test",
+            diagnostics = diag
+        )
+
+        val pruned = SudokuOcrEngine.pruneEmptyCellFalsePositives(bitmap, ocrResult)
+
+        assertEquals("Real clue R4C3 with ink must be retained", 1, pruned.board[3, 2])
+        assertEquals("False positive R7C1 must be pruned to 0", 0, pruned.board[6, 0])
+        assertEquals("Detected count should be 1 after pruning", 1, pruned.detectedCount)
+    }
 }
 

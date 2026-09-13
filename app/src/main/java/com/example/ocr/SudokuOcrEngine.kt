@@ -75,6 +75,7 @@ object SudokuOcrEngine {
             // Step 1.5: Targeted empty cell recovery on Pass 1 (recovers missed digits like '1' and '2')
             if (bestResult.detectedCount in 4..35 && (bestResult.diagnostics?.cellWidth ?: 0f) > 0f) {
                 bestResult = recoverEmptyCells(recognizer, bitmap, bestResult)
+                bestResult = pruneEmptyCellFalsePositives(bitmap, bestResult)
             }
 
             // Pass 2: If clues found are less than typical minimum (< 28), try with high-contrast enhancement
@@ -110,6 +111,7 @@ object SudokuOcrEngine {
                 }
             }
 
+            bestResult = pruneEmptyCellFalsePositives(bitmap, bestResult)
             Log.d(TAG, "[OCR] Recognition finished. Final detected clues: ${bestResult.detectedCount}. Message: '${bestResult.message}'")
             bestResult
         } catch (e: Exception) {
@@ -675,11 +677,12 @@ object SudokuOcrEngine {
                 val innerR = (cellR - insetX).toInt().coerceIn(innerL + 1, bitmap.width)
                 val innerB = (cellB - insetY).toInt().coerceIn(innerT + 1, bitmap.height)
 
-                if (!hasCellInk(bitmap, innerL, innerT, innerR, innerB)) {
+                val inkAnalysis = analyzeCellInk(bitmap, innerL, innerT, innerR, innerB)
+                if (!inkAnalysis.hasInk) {
                     continue
                 }
 
-                Log.d(TAG, "[CellRecovery] Cell R${row + 1}C${col + 1} has ink. Running targeted cell OCR...")
+                Log.d(TAG, "[CellRecovery] Cell R${row + 1}C${col + 1} has ink (isVerticalOne=${inkAnalysis.isVerticalStrokeOne}). Running targeted cell OCR...")
 
                 // Inset slightly less (10%) for OCR so full glyph with serifs is included
                 val cropL = (cellL + cellW * 0.10f).toInt().coerceIn(0, bitmap.width - 1)
@@ -694,39 +697,47 @@ object SudokuOcrEngine {
                 val cellBitmap = Bitmap.createBitmap(bitmap, cropL, cropT, cropW, cropH)
                 val preparedBitmap = prepareCellForOcr(cellBitmap)
 
+                var detectedDigit: CellDigitResult? = null
                 try {
                     val inputImage = InputImage.fromBitmap(preparedBitmap, 0)
                     val visionText = Tasks.await(recognizer.process(inputImage))
-                    val detectedDigit = extractSingleCellDigit(visionText)
-
-                    if (detectedDigit != null) {
-                        val (digit, char, conf) = detectedDigit
-                        // Validate against Sudoku row, column, and 3x3 box rules
-                        if (canPlaceDigit(updatedCells, row, col, digit)) {
-                            updatedCells[cellIdx] = digit
-                            recoveredCount++
-                            Log.d(TAG, "[CellRecovery] Successfully recovered digit $digit ('$char') at R${row + 1}C${col + 1} (conf: $conf)")
-
-                            updatedCandidates.add(
-                                com.example.diagnostics.DigitCandidateTelemetry(
-                                    digit = digit,
-                                    originalChar = char,
-                                    centerX = (cellL + cellR) / 2f,
-                                    centerY = (cellT + cellB) / 2f,
-                                    boxLeft = cropL,
-                                    boxTop = cropT,
-                                    boxRight = cropR,
-                                    boxBottom = cropB,
-                                    confidence = conf,
-                                    isExactDigit = true
-                                )
-                            )
-                        } else {
-                            Log.w(TAG, "[CellRecovery] Digit $digit at R${row + 1}C${col + 1} conflicts with existing clues; discarded.")
-                        }
-                    }
+                    detectedDigit = extractSingleCellDigit(visionText)
                 } catch (e: Exception) {
                     Log.w(TAG, "[CellRecovery] Targeted OCR error on cell R${row + 1}C${col + 1}: ${e.message}")
+                }
+
+                // Fallback: If ML Kit detected 0 text elements on this isolated cell crop,
+                // but the cell ink analysis verified a clear, centered vertical stroke matching digit '1'
+                if (detectedDigit == null && inkAnalysis.isVerticalStrokeOne) {
+                    Log.d(TAG, "[CellRecovery] Cell R${row + 1}C${col + 1}: ML Kit returned 0 text elements, but vertical stroke analyzer confirmed digit 1.")
+                    detectedDigit = CellDigitResult(digit = 1, char = '1', confidence = 0.92f)
+                }
+
+                if (detectedDigit != null) {
+                    val (digit, char, conf) = detectedDigit
+                    // Validate against Sudoku row, column, and 3x3 box rules
+                    if (canPlaceDigit(updatedCells, row, col, digit)) {
+                        updatedCells[cellIdx] = digit
+                        recoveredCount++
+                        Log.d(TAG, "[CellRecovery] Successfully recovered digit $digit ('$char') at R${row + 1}C${col + 1} (conf: $conf)")
+
+                        updatedCandidates.add(
+                            com.example.diagnostics.DigitCandidateTelemetry(
+                                digit = digit,
+                                originalChar = char,
+                                centerX = (cellL + cellR) / 2f,
+                                centerY = (cellT + cellB) / 2f,
+                                boxLeft = cropL,
+                                boxTop = cropT,
+                                boxRight = cropR,
+                                boxBottom = cropB,
+                                confidence = conf,
+                                isExactDigit = true
+                            )
+                        )
+                    } else {
+                        Log.w(TAG, "[CellRecovery] Digit $digit at R${row + 1}C${col + 1} conflicts with existing clues; discarded.")
+                    }
                 }
             }
         }
@@ -815,14 +826,36 @@ object SudokuOcrEngine {
         return out
     }
 
+    data class CellInkAnalysis(
+        val hasInk: Boolean,
+        val inkPixelCount: Int,
+        val strokeLeft: Int = 0,
+        val strokeTop: Int = 0,
+        val strokeRight: Int = 0,
+        val strokeBottom: Int = 0,
+        val strokeCenterX: Float = 0f,
+        val strokeCenterY: Float = 0f,
+        val strokeWidth: Float = 0f,
+        val strokeHeight: Float = 0f,
+        val isVerticalStrokeOne: Boolean = false
+    )
+
     /**
      * Determines whether the interior region of a cell contains contrasting printed ink
      * (as opposed to blank paper or uniform background).
      */
     fun hasCellInk(bitmap: Bitmap, left: Int, top: Int, right: Int, bottom: Int): Boolean {
+        return analyzeCellInk(bitmap, left, top, right, bottom).hasInk
+    }
+
+    /**
+     * Analyzes ink in the interior of a cell, calculating bounding box, contrast, pixel density,
+     * and detecting centered vertical strokes that correspond to digit '1'.
+     */
+    fun analyzeCellInk(bitmap: Bitmap, left: Int, top: Int, right: Int, bottom: Int): CellInkAnalysis {
         val w = right - left
         val h = bottom - top
-        if (w < 10 || h < 10) return false
+        if (w < 10 || h < 10) return CellInkAnalysis(hasInk = false, inkPixelCount = 0)
 
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, left, top, w, h)
@@ -843,19 +876,81 @@ object SudokuOcrEngine {
         }
 
         val contrast = maxLum - minLum
-        if (contrast < 28) return false
+        // Printed ink contrast against white/newsprint paper is distinct
+        if (contrast < 28) return CellInkAnalysis(hasInk = false, inkPixelCount = 0)
 
+        // Ink threshold: pixels significantly darker than the bright background
         val inkThreshold = (maxLum - contrast * 0.32f).toInt()
+        var minX = w
+        var maxX = 0
+        var minY = h
+        var maxY = 0
         var inkPixels = 0
-        for (lum in lumValues) {
-            if (lum <= inkThreshold) {
-                inkPixels++
+
+        for (y in 0 until h) {
+            val rowOffset = y * w
+            for (x in 0 until w) {
+                if (lumValues[rowOffset + x] <= inkThreshold) {
+                    inkPixels++
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
             }
         }
 
         val total = w * h
         val inkRatio = inkPixels.toFloat() / total
-        return inkPixels >= 12 && inkRatio in 0.005f..0.50f
+
+        // A genuine printed character in an inner cell crop has:
+        // - at least 12 dark pixels
+        // - ink ratio between 0.004 and 0.55
+        // - bounding box height >= 18% of inner cell height (rejects tiny dust/paper flecks)
+        val strokeW = if (inkPixels > 0) (maxX - minX + 1).toFloat() else 0f
+        val strokeH = if (inkPixels > 0) (maxY - minY + 1).toFloat() else 0f
+
+        val hasValidInk = inkPixels >= 12 &&
+                inkRatio in 0.004f..0.55f &&
+                strokeH >= h * 0.18f
+
+        if (!hasValidInk) {
+            return CellInkAnalysis(hasInk = false, inkPixelCount = inkPixels)
+        }
+
+        val strokeCx = left + (minX + maxX) / 2f
+        val strokeCy = top + (minY + maxY) / 2f
+        val innerCx = left + w / 2f
+        val innerCy = top + h / 2f
+
+        // Check if stroke matches digit 1 geometry:
+        // - Tall and narrow: height / width >= 1.8
+        // - Height spans at least 30% of inner cell height
+        // - Width is narrow: <= 32% of inner cell width
+        // - Centered within inner cell: center within 25% of inner cell dimensions
+        val aspectRatio = if (strokeW > 0) strokeH / strokeW else 0f
+        val dxCenter = abs(strokeCx - innerCx) / w.toFloat()
+        val dyCenter = abs(strokeCy - innerCy) / h.toFloat()
+
+        val isVerticalStrokeOne = aspectRatio >= 1.8f &&
+                strokeH >= h * 0.30f &&
+                strokeW <= w * 0.32f &&
+                dxCenter <= 0.25f &&
+                dyCenter <= 0.25f
+
+        return CellInkAnalysis(
+            hasInk = true,
+            inkPixelCount = inkPixels,
+            strokeLeft = left + minX,
+            strokeTop = top + minY,
+            strokeRight = left + maxX,
+            strokeBottom = top + maxY,
+            strokeCenterX = strokeCx,
+            strokeCenterY = strokeCy,
+            strokeWidth = strokeW,
+            strokeHeight = strokeH,
+            isVerticalStrokeOne = isVerticalStrokeOne
+        )
     }
 
     data class CellDigitResult(val digit: Int, val char: Char, val confidence: Float?)
@@ -886,9 +981,14 @@ object SudokuOcrEngine {
                             'l', 'I', '|', '!', 'i', 'j', '/', '\\', '(', ')', '[', ']' -> return CellDigitResult(1, '1', conf)
                             'Z', 'z' -> return CellDigitResult(2, '2', conf)
                             'S', 's' -> return CellDigitResult(5, '5', conf)
-                            'G', 'b' -> return CellDigitResult(6, '6', conf)
                             'B' -> return CellDigitResult(8, '8', conf)
-                            'q' -> return CellDigitResult(9, '9', conf)
+                            'G', 'b' -> {
+                                // Only accept ambiguous b/G -> 6 if confidence is sufficiently high to avoid noise
+                                if (conf >= 0.65f) return CellDigitResult(6, '6', conf)
+                            }
+                            'q' -> {
+                                if (conf >= 0.65f) return CellDigitResult(9, '9', conf)
+                            }
                         }
                     }
                 }
