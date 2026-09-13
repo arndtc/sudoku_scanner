@@ -24,10 +24,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -66,6 +68,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.logic.SudokuSolver
 import com.example.ui.components.NumberKeypad
+import com.example.ui.components.ScanFeedbackBanner
+import com.example.ui.components.ScanFeedbackDialog
 import com.example.ui.components.SudokuGridView
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,6 +82,8 @@ fun SudokuEditorScreen(
     modifier: Modifier = Modifier
 ) {
     val currentBoard by viewModel.currentBoard.collectAsStateWithLifecycle()
+    val initialBoard by viewModel.initialScannedBoard.collectAsStateWithLifecycle()
+    val diagnosticRecord by viewModel.latestDiagnosticRecord.collectAsStateWithLifecycle()
     val selectedIndex by viewModel.selectedIndex.collectAsStateWithLifecycle()
     val conflictedIndices by viewModel.conflictedIndices.collectAsStateWithLifecycle()
     val solveResult by viewModel.solveResult.collectAsStateWithLifecycle()
@@ -86,6 +92,7 @@ fun SudokuEditorScreen(
     val scanStatus by viewModel.scanStatus.collectAsStateWithLifecycle()
 
     var showPhotoPreview by remember(imageUri) { mutableStateOf(imageUri != null) }
+    var showFeedbackDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -113,6 +120,17 @@ fun SudokuEditorScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { showFeedbackDialog = true },
+                        modifier = Modifier.testTag("top_bar_feedback_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BugReport,
+                            contentDescription = "Submit Feedback"
                         )
                     }
                 },
@@ -241,6 +259,20 @@ fun SudokuEditorScreen(
                                 Text("Try Sample Photo", fontSize = 11.sp)
                             }
                             OutlinedButton(
+                                onClick = { showFeedbackDialog = true },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("report_scan_issue_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.BugReport,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Report Issue", fontSize = 11.sp)
+                            }
+                            OutlinedButton(
                                 onClick = { viewModel.dismissScanStatus() },
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                 shape = RoundedCornerShape(8.dp)
@@ -257,6 +289,14 @@ fun SudokuEditorScreen(
                 conflictsCount = conflictedIndices.size,
                 solveResult = solveResult,
                 clueCount = currentBoard.clueCount
+            )
+
+            // Scan Feedback Banner (Informs user about missed numbers & submitting logs)
+            ScanFeedbackBanner(
+                initialBoard = initialBoard,
+                currentBoard = currentBoard,
+                onOpenFeedback = { showFeedbackDialog = true },
+                modifier = Modifier.fillMaxWidth()
             )
 
             // Original Photo Preview
@@ -439,6 +479,15 @@ fun SudokuEditorScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+
+    if (showFeedbackDialog) {
+        val record = diagnosticRecord ?: viewModel.getDiagnosticRecordOrFallback()
+        ScanFeedbackDialog(
+            diagnosticRecord = record,
+            currentBoard = currentBoard,
+            onDismiss = { showFeedbackDialog = false }
+        )
     }
 }
 

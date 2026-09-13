@@ -61,6 +61,10 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
     val currentBoard: StateFlow<SudokuBoard> = _currentBoard.asStateFlow()
 
     private val _initialScannedBoard = MutableStateFlow(SudokuBoard.EMPTY)
+    val initialScannedBoard: StateFlow<SudokuBoard> = _initialScannedBoard.asStateFlow()
+
+    private val _latestDiagnosticRecord = MutableStateFlow<com.example.diagnostics.ScanDiagnosticRecord?>(null)
+    val latestDiagnosticRecord: StateFlow<com.example.diagnostics.ScanDiagnosticRecord?> = _latestDiagnosticRecord.asStateFlow()
 
     private val _selectedIndex = MutableStateFlow<Int?>(0)
     val selectedIndex: StateFlow<Int?> = _selectedIndex.asStateFlow()
@@ -126,6 +130,15 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
         _currentBoard.value = board
         _currentImageUri.value = null
         _currentPuzzleTitle.value = sample.title
+        _latestDiagnosticRecord.value = com.example.diagnostics.ScanDiagnosticRecord(
+            timestamp = System.currentTimeMillis(),
+            imageWidth = 900,
+            imageHeight = 900,
+            initialScannedBoard = board,
+            visualGridDetected = true,
+            ocrPassUsed = "Bundled Sample (${sample.title})",
+            placedCluesCount = board.clueCount
+        )
         _scanStatus.value = ScanStatus.Success(
             detectedCount = board.clueCount,
             message = "Loaded sample: ${sample.title} (${board.clueCount} clues)"
@@ -167,6 +180,25 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val ocrResult = SudokuOcrEngine.recognizeSudoku(bitmap)
+                val diagRecord = com.example.diagnostics.ScanDiagnosticRecord(
+                    timestamp = System.currentTimeMillis(),
+                    imageWidth = bitmap.width,
+                    imageHeight = bitmap.height,
+                    cropRect = null,
+                    initialScannedBoard = ocrResult.board,
+                    visualGridDetected = ocrResult.diagnostics?.visualGridDetected ?: false,
+                    gridBounds = ocrResult.gridBounds,
+                    ocrPassUsed = ocrResult.diagnostics?.passName ?: "Standard",
+                    rawCandidates = ocrResult.diagnostics?.rawCandidates ?: emptyList(),
+                    placedCluesCount = ocrResult.detectedCount,
+                    imageUri = uri,
+                    gridLeft = ocrResult.diagnostics?.gridLeft ?: 0f,
+                    gridTop = ocrResult.diagnostics?.gridTop ?: 0f,
+                    cellWidth = ocrResult.diagnostics?.cellWidth ?: 0f,
+                    cellHeight = ocrResult.diagnostics?.cellHeight ?: 0f
+                )
+                _latestDiagnosticRecord.value = diagRecord
+
                 if (ocrResult.detectedCount > 0) {
                     _initialScannedBoard.value = ocrResult.board
                     _currentBoard.value = ocrResult.board
@@ -410,6 +442,25 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val ocrResult = SudokuOcrEngine.recognizeSudoku(croppedBitmap)
+                val diagRecord = com.example.diagnostics.ScanDiagnosticRecord(
+                    timestamp = System.currentTimeMillis(),
+                    imageWidth = croppedBitmap.width,
+                    imageHeight = croppedBitmap.height,
+                    cropRect = _cropRect.value,
+                    initialScannedBoard = ocrResult.board,
+                    visualGridDetected = ocrResult.diagnostics?.visualGridDetected ?: false,
+                    gridBounds = ocrResult.gridBounds,
+                    ocrPassUsed = ocrResult.diagnostics?.passName ?: "Standard",
+                    rawCandidates = ocrResult.diagnostics?.rawCandidates ?: emptyList(),
+                    placedCluesCount = ocrResult.detectedCount,
+                    imageUri = croppedUri ?: _currentImageUri.value,
+                    gridLeft = ocrResult.diagnostics?.gridLeft ?: 0f,
+                    gridTop = ocrResult.diagnostics?.gridTop ?: 0f,
+                    cellWidth = ocrResult.diagnostics?.cellWidth ?: 0f,
+                    cellHeight = ocrResult.diagnostics?.cellHeight ?: 0f
+                )
+                _latestDiagnosticRecord.value = diagRecord
+
                 if (ocrResult.detectedCount > 0) {
                     _initialScannedBoard.value = ocrResult.board
                     _currentBoard.value = ocrResult.board
@@ -439,6 +490,25 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
             _scanStatus.value = ScanStatus.Scanning
             try {
                 val ocrResult = SudokuOcrEngine.recognizeSudoku(bitmap)
+                val diagRecord = com.example.diagnostics.ScanDiagnosticRecord(
+                    timestamp = System.currentTimeMillis(),
+                    imageWidth = bitmap.width,
+                    imageHeight = bitmap.height,
+                    cropRect = null,
+                    initialScannedBoard = ocrResult.board,
+                    visualGridDetected = ocrResult.diagnostics?.visualGridDetected ?: false,
+                    gridBounds = ocrResult.gridBounds,
+                    ocrPassUsed = ocrResult.diagnostics?.passName ?: "Standard",
+                    rawCandidates = ocrResult.diagnostics?.rawCandidates ?: emptyList(),
+                    placedCluesCount = ocrResult.detectedCount,
+                    imageUri = _currentImageUri.value,
+                    gridLeft = ocrResult.diagnostics?.gridLeft ?: 0f,
+                    gridTop = ocrResult.diagnostics?.gridTop ?: 0f,
+                    cellWidth = ocrResult.diagnostics?.cellWidth ?: 0f,
+                    cellHeight = ocrResult.diagnostics?.cellHeight ?: 0f
+                )
+                _latestDiagnosticRecord.value = diagRecord
+
                 if (ocrResult.detectedCount > 0) {
                     _initialScannedBoard.value = ocrResult.board
                     _currentBoard.value = ocrResult.board
@@ -625,5 +695,50 @@ class SudokuViewModel(application: Application) : AndroidViewModel(application) 
         val clip = ClipData.newPlainText("Sudoku Puzzle", content)
         clipboard.setPrimaryClip(clip)
         Toast.makeText(context, "Copied ${format.displayName} to clipboard!", Toast.LENGTH_SHORT).show()
+    }
+
+    fun getDiagnosticRecordOrFallback(): com.example.diagnostics.ScanDiagnosticRecord {
+        return _latestDiagnosticRecord.value ?: com.example.diagnostics.ScanDiagnosticRecord(
+            timestamp = System.currentTimeMillis(),
+            imageWidth = 0,
+            imageHeight = 0,
+            initialScannedBoard = _initialScannedBoard.value.takeIf { it.clueCount > 0 } ?: _currentBoard.value,
+            placedCluesCount = _initialScannedBoard.value.clueCount,
+            imageUri = _currentImageUri.value
+        )
+    }
+
+    fun submitFeedbackToGitHub(
+        context: Context,
+        repo: String = com.example.diagnostics.FeedbackHelper.DEFAULT_GITHUB_REPO,
+        userNotes: String? = null
+    ) {
+        val record = getDiagnosticRecordOrFallback()
+        com.example.diagnostics.FeedbackHelper.openGitHubIssue(
+            context = context,
+            record = record,
+            currentBoard = _currentBoard.value,
+            repo = repo,
+            userNotes = userNotes
+        )
+    }
+
+    fun shareDiagnosticPackage(context: Context, userNotes: String? = null) {
+        val record = getDiagnosticRecordOrFallback()
+        com.example.diagnostics.FeedbackHelper.shareDiagnosticPackage(
+            context = context,
+            record = record,
+            currentBoard = _currentBoard.value,
+            userNotes = userNotes
+        )
+    }
+
+    fun copyDiagnosticReport(context: Context, userNotes: String? = null) {
+        val record = getDiagnosticRecordOrFallback()
+        val text = record.generateMarkdownReport(
+            currentBoard = _currentBoard.value,
+            userNotes = userNotes
+        )
+        com.example.diagnostics.FeedbackHelper.copyToClipboard(context, text, showToast = true)
     }
 }
